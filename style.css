@@ -34,3 +34,23 @@
 
 #fish-dialogue .fa-default-heading { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
 #fish-dialogue .fa-default-heading label { margin:8px 0; }
+
+/* Voice library */
+#fish-dialogue .fa-lib-item { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:6px 0; padding-bottom:6px; border-bottom:1px solid #ffffff14; }
+#fish-dialogue .fa-lib-item span { flex:1; min-width:120px; }
+#fish-dialogue .fa-lib-item small { opacity:.6; white-space:nowrap; }
+#fish-dialogue #fa-voicelib { max-height:300px; overflow:auto; }
+#fish-dialogue .fa-lib-add { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+#fish-dialogue .fa-lib-add input { flex:1; min-width:110px; width:auto; }
+#fish-dialogue .fa-lib-add select { flex:0 0 auto; width:auto; }
+
+/* Per-language voice slots */
+#fish-dialogue .fa-lang-select { display:flex; align-items:center; gap:6px; margin:4px 0; }
+#fish-dialogue .fa-lang-select span { flex:0 0 3em; opacity:.75; }
+#fish-dialogue .fa-lang-select select { flex:1; min-width:0; width:auto; }
+#fish-dialogue .fa-voice select { flex:1; min-width:80px; width:auto; }
+
+/* Chat-page switcher */
+#fa-chat-switcher { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 6px; padding:0 2px; }
+#fa-chat-switcher .fa-switch-label { opacity:.7; font-size:12px; }
+#fa-chat-switcher .fa-switch-select { flex:1 1 120px; min-width:0; width:auto; font-size:12px; }

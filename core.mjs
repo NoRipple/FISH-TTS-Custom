@@ -1,4 +1,5 @@
-export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, auto: false, fallback: false, blockEnabled: false, blockedNames: '' });
+export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], auto: false, fallback: false, blockEnabled: false, blockedNames: '' });
+export const VOICE_LANGUAGES = Object.freeze(['zh', 'ja', 'en']);
 export const ENGINES = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1', 'drama-3-preview'];
 
 export function stripExcluded(text) {
@@ -72,9 +73,34 @@ export function extract(text, { language = 'orig', speaker = '', fallback = true
     return { segments, warnings };
 }
 
-export function voiceFor(segment, settings) {
+// A voice binding is either a legacy plain id ("abc") or a per-language map
+// ({zh,ja,en,default}). Both shapes are read here; callers never branch on it.
+export function normalizeVoiceConfig(value) {
+    if (!value) return {};
+    if (typeof value === 'string') return value.trim() ? { default: value.trim() } : {};
+    if (typeof value !== 'object') return {};
+    const config = {};
+    for (const key of [...VOICE_LANGUAGES, 'default']) {
+        const voice = value[key];
+        if (typeof voice === 'string' && voice.trim()) config[key] = voice.trim();
+    }
+    return config;
+}
+
+// First source that resolves for this language wins. An unset language falls
+// back to that source's language-agnostic default, then to the next source.
+export function resolveVoice(language, ...sources) {
+    for (const source of sources) {
+        const config = normalizeVoiceConfig(source);
+        const voice = config[language] || config.default;
+        if (voice) return voice;
+    }
+    return '';
+}
+
+export function voiceFor(segment, settings, override) {
     const row = Object.hasOwn(settings.voices, segment.speaker) ? settings.voices[segment.speaker] : null;
-    return (typeof row === 'string' ? row : row?.[segment.language] || row?.default) || settings.defaultVoice;
+    return resolveVoice(segment.language, override, row, settings.defaultVoice);
 }
 
 export function dialogueRecords(text, settings) {
