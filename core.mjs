@@ -1,4 +1,4 @@
-export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], auto: false, fallback: false, blockEnabled: false, blockedNames: '' });
+export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], concurrency: 10, auto: false, fallback: false, blockEnabled: false, blockedNames: '' });
 export const VOICE_LANGUAGES = Object.freeze(['zh', 'ja', 'en']);
 export const ENGINES = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1', 'drama-3-preview'];
 
@@ -98,9 +98,12 @@ export function resolveVoice(language, ...sources) {
     return '';
 }
 
-export function voiceFor(segment, settings, override) {
+// Exactly two levels: a per-character binding, then the global default. The
+// chat-page switcher edits the global default, so both entry points always
+// show and write the same value.
+export function voiceFor(segment, settings) {
     const row = Object.hasOwn(settings.voices, segment.speaker) ? settings.voices[segment.speaker] : null;
-    return resolveVoice(segment.language, override, row, settings.defaultVoice);
+    return resolveVoice(segment.language, row, settings.defaultVoice);
 }
 
 export function dialogueRecords(text, settings) {

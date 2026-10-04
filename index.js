@@ -52,16 +52,19 @@ root.innerHTML = `
 </details>
 <details open><summary>角色音色</summary>
 <div class="fa-default-heading"><span>默认音色（按语言）</span><button id="fa-preview-default" type="button">试听默认音色</button></div>
+<small>与聊天页输入框上方的音色开关是同一份设置，改任意一处另一处同步。</small>
 <div id="fa-default"></div>
 <label class="checkbox_label"><input id="fa-block-enabled" type="checkbox"> 启用角色屏蔽</label>
 <label>屏蔽角色名字（每行一个，精确匹配）<textarea id="fa-block-names" class="text_pole" rows="2" placeholder="例如：屏蔽角色名字"></textarea></label>
 <small>屏蔽只影响语音，中文对白照常显示。修改后立即停止当前队列。</small>
-<small>角色名须与世界书输出完全一致；某语言留空即回落到默认音色，聊天页的切换优先于这里。</small>
+<small>角色名须与世界书输出完全一致；某语言留空即使用下面的默认音色。</small>
 <div id="fa-voices"></div><button id="fa-add">添加角色</button><button id="fa-save-voices">保存角色绑定</button>
 </details>
 <details><summary>合成进度 / 已生成语音 <span class="fa-version">本地保存</span></summary>
 <div id="fa-progress-summary" role="status">尚无合成任务</div><progress id="fa-progress-bar" max="1" value="0"></progress>
 <div class="fa-row"><button id="fa-cancel-generation">取消合成队列</button></div>
+<label>最大并发请求数（1–10）<input id="fa-concurrency" type="number" min="1" max="10" step="1" class="text_pole"></label>
+<small>并发越高出音越快。Fish 有速率上限，日志出现 HTTP 429 时请调低；酒馆的 CorsProxy 同样按并发出站，数值过高可能触发服务端连接数告警。</small>
 <small>字节数来自浏览器实际接收量。上游不提供总长度时不显示虚构百分比。</small><div id="fa-progress-list"></div>
 <div class="fa-row"><button id="fa-library-refresh">刷新语音列表</button></div>
 <small id="fa-library-path">保存在当前浏览器中；清除网站数据会删除音频。可逐条下载。</small>
@@ -116,7 +119,18 @@ async function api(action,input={},signal,update) {
     }
     throw Error('不支持的本地操作');
 }
-const generator = new SynthesisQueue({synthesize:synthesizeRaw, changed:renderProgress});
+// A pool of ten requests reports progress on every streamed chunk; without this
+// the panel would rebuild its task list thousands of times per reply.
+const PROGRESS_INTERVAL_MS = 150;
+let progressTimerId = null, lastProgressAt = 0;
+function requestProgress() {
+    if (progressTimerId !== null) return;
+    progressTimerId = setTimeout(() => {
+        progressTimerId = null; lastProgressAt = Date.now();
+        try { renderProgress(); } catch (e) { log('ERROR', e.message); }
+    }, Math.max(0, PROGRESS_INTERVAL_MS - (Date.now() - lastProgressAt)));
+}
+const generator = new SynthesisQueue({synthesize:synthesizeRaw, changed:requestProgress, concurrency:settings.concurrency});
 function renderProgress() {
     const tasks = generator.tasks;
     for(const task of tasks) if(task.status==='failed' && !task.errorReported){task.errorReported=true;log('ERROR',task.error);}
@@ -139,6 +153,12 @@ function renderProgress() {
 function stopAll() { generator.cancel(); queue.stop(); }
 click('cancel-generation',()=>generator.cancel());
 const progressTimer=setInterval(()=>{if(generator.running)renderProgress();},1000);
+$('concurrency').value = String(generator.concurrency);
+$('concurrency').addEventListener('change', () => {
+    const applied = generator.setConcurrency($('concurrency').value);
+    $('concurrency').value = String(applied); settings.concurrency = applied; save();
+    log('INFO', '最大并发请求数已设为 ' + applied);
+});
 const queue = new SpeechQueue({
     audio: $('audio'), log,
     changed(q) {
@@ -158,18 +178,15 @@ function languageLabel(code) { return { zh: '中文', ja: '日语', en: '英语'
 // No declared language means "usable anywhere": most clones carry no language
 // metadata, and hiding them would empty the selector for those users.
 function entryMatches(entry, language) { return !entry.languages.length || entry.languages.includes(language); }
-// Chat-scoped override written by the switcher above the input box. Segment
-// language comes from the Talk-Emo protocol, so each line picks its own slot.
-function chatVoiceConfig() {
-    const voice = ctx().chatMetadata?.fish_dialogue?.voice;
-    return voice && typeof voice === 'object' ? voice : {};
-}
-async function saveChatMetadata() {
-    const c = ctx();
-    try {
-        if (typeof c.saveMetadata === 'function') await c.saveMetadata();
-        else if (typeof c.saveChat === 'function') await c.saveChat();
-    } catch (e) { log('WARN', '聊天音色设置保存失败：' + e.message); }
+// The chat-page switcher and the settings panel edit the same value, so there is
+// one source of truth and no override layer to explain away. Segment language
+// still comes from the Talk-Emo protocol, so each line picks its own slot.
+function setDefaultVoice(language, value) {
+    const next = normalizeVoiceConfig(settings.defaultVoice);
+    if (value) next[language] = value; else delete next[language];
+    settings.defaultVoice = next;
+    save(); stopAll();
+    renderDefaultVoiceSelects(); renderChatSwitcher();
 }
 function fillSelect(select, language, current) {
     const options = [{ value: '', label: '— 默认 —' }], seen = new Set(['']);
@@ -211,7 +228,7 @@ function renderVoiceLibrary() {
         row.append(name, meta, play, remove); $('voicelib').append(row);
     }
 }
-function renderDefaultVoices() {
+function renderDefaultVoiceSelects() {
     const host = $('default'); host.replaceChildren();
     const config = normalizeVoiceConfig(settings.defaultVoice);
     for (const language of VOICE_LANGUAGES) {
@@ -221,11 +238,7 @@ function renderDefaultVoices() {
         // A legacy plain-id binding has no per-language key. Showing it in every
         // slot mirrors how it actually resolves, and stops "保存" from wiping it.
         fillSelect(select, language, config[language] || config.default || '');
-        select.addEventListener('change', () => {
-            const next = normalizeVoiceConfig(settings.defaultVoice);
-            if (select.value) next[language] = select.value; else delete next[language];
-            settings.defaultVoice = next; save(); stopAll();
-        });
+        select.addEventListener('change', () => setDefaultVoice(language, select.value));
         wrap.append(caption, select); host.append(wrap);
     }
 }
@@ -255,7 +268,7 @@ function renderVoiceRows(rows) { $('voices').replaceChildren(); for (const row o
 // adding or removing a library voice never discards in-progress edits.
 function refreshVoiceSelectors() {
     const rows = collectVoiceRows();
-    renderVoiceLibrary(); renderDefaultVoices(); renderVoiceRows(rows); renderChatSwitcher();
+    renderVoiceLibrary(); renderDefaultVoiceSelects(); renderVoiceRows(rows); renderChatSwitcher();
 }
 click('library-sync', async () => {
     const entries = await fetchVoiceLibrary({ baseUrl: settings.baseUrl, apiKey });
@@ -289,30 +302,34 @@ function mountChatSwitcher() {
     chatSwitcher.replaceChildren(label);
     for (const language of VOICE_LANGUAGES) {
         const select = document.createElement('select'); select.className = 'text_pole fa-switch-select';
-        select.dataset.lang = language; select.title = languageLabel(language) + '音色（仅本聊天生效）';
-        select.addEventListener('change', async () => {
-            select.disabled = true;
-            try {
-                const c = ctx();
-                if (!c.chatMetadata) throw new Error('聊天元数据尚未加载，请稍后重试');
-                c.chatMetadata.fish_dialogue ||= {};
-                const config = c.chatMetadata.fish_dialogue.voice ||= {};
-                if (select.value) config[language] = select.value; else delete config[language];
-                stopAll(); await saveChatMetadata();
-                log('INFO', languageLabel(language) + '音色已切换为 ' + (select.value || '角色默认'));
-            } catch (e) { log('ERROR', e.message); }
-            finally { select.disabled = false; renderChatSwitcher(); }
-        });
+        select.dataset.lang = language; select.title = languageLabel(language) + '音色（与设置面板同步）';
+        select.addEventListener('change', () => setDefaultVoice(language, select.value));
         chatSwitcher.append(select);
     }
     anchor.before(chatSwitcher);
 }
 function renderChatSwitcher() {
     if (!chatSwitcher.isConnected) return;
-    const config = chatVoiceConfig();
-    for (const select of chatSwitcher.querySelectorAll('select')) fillSelect(select, select.dataset.lang, config[select.dataset.lang] || '');
+    const config = normalizeVoiceConfig(settings.defaultVoice);
+    for (const select of chatSwitcher.querySelectorAll('select')) {
+        fillSelect(select, select.dataset.lang, config[select.dataset.lang] || config.default || '');
+    }
 }
-renderVoiceLibrary(); renderDefaultVoices();
+// Older builds kept a per-chat override. Fold it into the global default once,
+// otherwise merging the two controls would silently change the user's voice.
+(function adoptLegacyChatVoice() {
+    const legacy = ctx().chatMetadata?.fish_dialogue?.voice;
+    if (!legacy || typeof legacy !== 'object') return;
+    const merged = normalizeVoiceConfig(settings.defaultVoice), adopted = [];
+    for (const language of VOICE_LANGUAGES) {
+        const value = legacy[language];
+        if (typeof value === 'string' && value.trim() && !merged[language]) { merged[language] = value.trim(); adopted.push(language); }
+    }
+    if (!adopted.length) return;
+    settings.defaultVoice = merged; save();
+    log('INFO', '已把本聊天的音色选择并入全局默认音色：' + adopted.map(languageLabel).join('、'));
+})();
+renderVoiceLibrary(); renderDefaultVoiceSelects();
 renderVoiceRows(Object.entries(settings.voices).map(([name, config]) => ({ name, langs: normalizeVoiceConfig(config) })));
 mountChatSwitcher(); renderChatSwitcher();
 async function synthesizeRaw(item, signal, update) {
@@ -370,7 +387,7 @@ function parsed(text, speaker, language = settings.language) {
     return allowed;
 }
 function enqueue(segments, replace = false, eager = false) {
-    const items = segments.filter(s => !isBlocked(s.speaker, settings)).map(s => ({ ...s, voice: voiceFor(s, settings, chatVoiceConfig()), model: settings.model, baseUrl: settings.baseUrl }));
+    const items = segments.filter(s => !isBlocked(s.speaker, settings)).map(s => ({ ...s, voice: voiceFor(s, settings), model: settings.model, baseUrl: settings.baseUrl }));
     if (items.some(x => !x.voice)) throw new Error('缺少音色：请先在“音色库”同步或添加音色，再在“角色音色”或聊天页选择');
     if (!items.length) return;
     if (queue.items.length + items.length > 100 && !replace) throw new Error('等待队列超过 100 句，请先播放或停止');
@@ -411,7 +428,7 @@ click('save-voices', () => {
 function generateMessage(message) {
     const id=ctx().chat.indexOf(message);
     const items=parsed(message.mes,message.name || ctx().name2,message.extra?.fish_dialogue?.language || settings.language)
-        .map(s=>({...s,messageRef:message,uiKey:id+':'+s.block,voice:voiceFor(s,settings,chatVoiceConfig()),model:settings.model,baseUrl:settings.baseUrl}));
+        .map(s=>({...s,messageRef:message,uiKey:id+':'+s.block,voice:voiceFor(s,settings),model:settings.model,baseUrl:settings.baseUrl}));
     if(items.some(x=>!x.voice)) throw new Error('缺少音色：请先在“音色库”同步或添加音色，再在“角色音色”或聊天页选择');
     for(const item of items) generator.submit(item,{retainAudio:false});
 }

@@ -70,13 +70,45 @@ export function detectAudioType(bytes) {
     if(bytes.length>=8 && text(0,4)==='fLaC')return 'audio/flac';
     return null;
 }
-export async function synthesizeBrowser(input,key,store,signal,update=()=>{},fetcher=fetch) {
-    const request=ttsRequest(input,key);
-    const normalized={...input,baseUrl:request.baseUrl,model:request.model,voice:input.voice.trim()};
-    const id=await audioKey(normalized);signal?.throwIfAborted();
-    const cached=await store.read(id);signal?.throwIfAborted();
-    input.assetId=id;
-    if(cached){input.cacheSource='disk';return cached;}
+
+// A saturated account answers 429; with a pool of requests in flight that is
+// transient rather than a reason to drop the whole queue, so those are retried.
+export const MAX_RETRIES = 2;
+export const MAX_RETRY_DELAY_MS = 10000;
+const RETRYABLE_STATUS = new Set([429, 503]);
+
+export function parseRetryAfter(value, now = Date.now()) {
+    if (value === null || value === undefined || value === '') return null;
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, MAX_RETRY_DELAY_MS);
+    const date = Date.parse(String(value));
+    if (Number.isFinite(date)) return Math.max(0, Math.min(date - now, MAX_RETRY_DELAY_MS));
+    return null;
+}
+
+function httpError(response) {
+    const status = response.status;
+    if (status === 404) return Error('HTTP 404：请启用 enableCorsProxy: true 并重启酒馆；若已开启，请检查 Base URL 和 Fish 接口。');
+    const error = Error(RETRYABLE_STATUS.has(status)
+        ? `Fish 返回 HTTP ${status}：请求过于频繁或服务繁忙，已自动重试仍失败；请调低并发数后重试。`
+        : `Fish / CorsProxy HTTP ${status}；未自动重试，请检查 Key、额度和网络。`);
+    error.status = status;
+    error.retryable = RETRYABLE_STATUS.has(status);
+    error.retryAfterMs = parseRetryAfter(response.headers?.get?.('retry-after'));
+    return error;
+}
+
+function delay(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
+        const abort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+        signal?.addEventListener('abort', abort, { once: true });
+    });
+}
+
+// One attempt: fetch, stream the body down, verify it really is audio.
+async function fetchAudio(request, signal, update, fetcher) {
     const controller=new AbortController();let timedOut=false;
     const abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});
     const timer=setTimeout(()=>{timedOut=true;controller.abort();},120000);
@@ -84,7 +116,7 @@ export async function synthesizeBrowser(input,key,store,signal,update=()=>{},fet
     try {
         signal?.throwIfAborted();update({status:'requesting'});
         const response=await fetcher(request.url,{...request.options,signal:controller.signal,redirect:'error'});
-        if(!response.ok)throw Error(response.status===404?'HTTP 404：请启用 enableCorsProxy: true 并重启酒馆；若已开启，请检查 Base URL 和 Fish 接口。':`Fish / CorsProxy HTTP ${response.status}；未自动重试，请检查 Key、额度和网络。`);
+        if(!response.ok)throw httpError(response);
         const type=response.headers.get('content-type') || '';
         // Some SillyTavern versions forward the body but omit upstream Content-Type.
         // Validate headerless/generic bodies by their file signature after reading.
@@ -99,13 +131,32 @@ export async function synthesizeBrowser(input,key,store,signal,update=()=>{},fet
         const signature=detectAudioType(new Uint8Array(await received.slice(0,32).arrayBuffer()));
         const mime=signature || (/^audio\//i.test(type)?type:null);
         if(!mime)throw Error('返回内容无法识别为音频（可能是登录页或接口错误文本）；请检查登录状态、Base URL 和模型。无需修改 cors.origin。');
-        update({status:'saving'});
-        const blob=new Blob([received],{type:mime});await store.write(normalized,blob,id,signal);signal?.throwIfAborted();
-        input.cacheSource='generated';return blob;
+        return new Blob([received],{type:mime});
     } catch(e) {
         if(signal?.aborted)throw new DOMException('Aborted','AbortError');
         if(timedOut)throw Error('Fish 请求超时（120 秒）');
         if(e instanceof TypeError)throw Error('请求失败：请检查酒馆网络、VPN 和内置 CorsProxy');
         throw e;
     } finally {clearTimeout(timer);signal?.removeEventListener('abort',abort);try{await reader?.cancel();}catch{}}
+}
+
+export async function synthesizeBrowser(input,key,store,signal,update=()=>{},fetcher=fetch) {
+    const request=ttsRequest(input,key);
+    const normalized={...input,baseUrl:request.baseUrl,model:request.model,voice:input.voice.trim()};
+    const id=await audioKey(normalized);signal?.throwIfAborted();
+    const cached=await store.read(id);signal?.throwIfAborted();
+    input.assetId=id;
+    if(cached){input.cacheSource='disk';return cached;}
+    for(let attempt=0;;attempt++){
+        try {
+            const blob=await fetchAudio(request,signal,update,fetcher);
+            update({status:'saving'});
+            await store.write(normalized,blob,id,signal);signal?.throwIfAborted();
+            input.cacheSource='generated';return blob;
+        } catch(e) {
+            if(!e?.retryable || attempt >= MAX_RETRIES) throw e;
+            // Exponential backoff, but an explicit Retry-After wins over it.
+            await delay(e.retryAfterMs ?? Math.min(1000 * 2 ** attempt, MAX_RETRY_DELAY_MS), signal);
+        }
+    }
 }
