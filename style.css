@@ -48,6 +48,7 @@
 #fish-dialogue .fa-lib-head input[type=checkbox] { flex:0 0 auto; width:auto; }
 #fish-dialogue .fa-lib-name { flex:1 1 120px; min-width:100px; width:auto; }
 #fish-dialogue .fa-lib-guide { display:block; opacity:.72; padding-left:24px; }
+#fish-dialogue .fa-lib-guide-input { width:100%; box-sizing:border-box; font-size:12px; margin-top:2px; }
 
 /* Per-language voice slots */
 #fish-dialogue .fa-lang-select { display:flex; align-items:center; gap:6px; margin:4px 0; }

@@ -28,7 +28,7 @@ let inline, libraryEntries = [];
 const root = document.createElement('section'); root.id = 'fish-dialogue';
 root.innerHTML = `
 <div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header" role="button" tabindex="0"><b>Fish 对话音声</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.5.1</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.5.2</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -50,7 +50,7 @@ root.innerHTML = `
 <div class="fa-row"><button id="fa-import-roster">导入内置音色（28）</button></div>
 <small class="fa-hint">同步只读取你 Fish 账号中已创建或已收藏的音色；未标注语言的音色在三种语言下都可选。库只影响选择列表，不会修改 Fish 上的任何音色。</small>
 <div id="fa-voicelib"></div>
-<div class="fa-lib-add"><input id="fa-lib-name" class="text_pole" placeholder="名称（可留空）"><input id="fa-lib-id" class="text_pole" placeholder="音色 ID"><select id="fa-lib-lang" class="text_pole"><option value="">通用</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option></select><button id="fa-lib-add">手动添加</button></div>
+<div class="fa-lib-add"><input id="fa-lib-name" class="text_pole" placeholder="名称（可留空）"><input id="fa-lib-id" class="text_pole" placeholder="音色 ID"><select id="fa-lib-lang" class="text_pole"><option value="">通用</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option></select><input id="fa-lib-guide" class="text_pole" placeholder="使用指南（可选）"><button id="fa-lib-add">手动添加</button></div>
 </div>
 <div class="fa-sub"><div class="fa-subhead">角色绑定</div>
 <div id="fa-voices"></div>
@@ -265,7 +265,13 @@ function renderVoiceLibrary() {
         };
         head.append(active, name, meta, play, remove);
         row.append(head);
-        if (entry.guide) { const guide = document.createElement('small'); guide.className = 'fa-lib-guide'; guide.textContent = entry.guide; row.append(guide); }
+        const guide = document.createElement('input');
+        guide.className = 'text_pole fa-lib-guide-input';
+        guide.placeholder = '使用指南（可选，会同步进世界书名册）';
+        guide.value = entry.guide || '';
+        guide.title = '这段描述会写进世界书的音色名册，帮助模型判断何时选用该音色';
+        guide.addEventListener('change', () => { entry.guide = guide.value.trim(); settings.voiceLibrary = voiceLibrary; save(); });
+        row.append(guide);
         $('voicelib').append(row);
     }
     const activeCount = voiceLibrary.filter(e => e.active !== false).length;
@@ -330,11 +336,12 @@ click('library-sync', async () => {
 });
 click('lib-add', () => {
     const name = $('lib-name').value.trim(), id = $('lib-id').value.trim(), language = $('lib-lang').value;
+    const guide = $('lib-guide').value.trim();
     if (!id) throw new Error('请填写音色 ID');
     if (voiceLibrary.some(entry => entry.id === id)) throw new Error('该音色已在音色库中');
-    voiceLibrary = voiceLibrary.concat([{ id, name: name || id, languages: language ? [language] : [], state: '' }]);
+    voiceLibrary = voiceLibrary.concat([{ id, name: name || id, languages: language ? [language] : [], state: '', guide }]);
     settings.voiceLibrary = voiceLibrary; save();
-    $('lib-name').value = ''; $('lib-id').value = ''; $('lib-lang').value = '';
+    $('lib-name').value = ''; $('lib-id').value = ''; $('lib-lang').value = ''; $('lib-guide').value = '';
     refreshVoiceSelectors(); log('INFO', '已添加音色 ' + (name || id));
 });
 function importRosterEntries(roster) {
@@ -666,4 +673,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); mountChatSwitcher(); renderChatSwitcher(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.5.1 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.5.2 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
