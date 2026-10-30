@@ -6,7 +6,7 @@ function replacement(b, language, ordinal = b.block) {
     else if (!b.valid) value += ' ⟦FAPBAD⟧';
     return value;
 }
-function same(a,b) { return a.speaker === b.speaker && a.tag === b.tag && a.text === b.text && a.valid === b.valid; }
+function same(a,b) { return a.speaker === b.speaker && a.tag === b.tag && a.text === b.text && a.valid === b.valid && (a.voice || '') === (b.voice || ''); }
 export function displayText(text, language, original = text) {
     const records = blocks(text), originalRecords = blocks(original), masked = stripExcluded(text);
     let output = String(text ?? ''), cursor = 0;

@@ -1,4 +1,4 @@
-export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], concurrency: 10, auto: false, fallback: false, blockEnabled: false, blockedNames: '' });
+export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], concurrency: 10, auto: false, fallback: false, blockEnabled: false, blockedNames: '', autoVoice: true, autoMulti: true, rosterImported: 0 });
 export const VOICE_LANGUAGES = Object.freeze(['zh', 'ja', 'en']);
 export const ENGINES = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1', 'drama-3-preview'];
 
@@ -15,14 +15,32 @@ export function isBlocked(speaker, settings) {
     return names.includes(String(speaker || '').trim());
 }
 
+// <Talk-Emo>speaker|lang|"text"</Talk-Emo> — the legacy form — or the extended
+// form <Talk-Emo>speaker|lang|VoiceName"text"</Talk-Emo> where an optional voice
+// name sits immediately before the opening quote. Still exactly two pipe
+// separators, so a line without a voice parses exactly as before.
+export function parseTalkEmo(inner) {
+    const parts = /^\s*([^|<>\r\n]+)\|(orig|zh|en|ja)\|([\s\S]*)$/.exec(inner);
+    if (!parts) return null;
+    let body = parts[3].trim(), voice = '';
+    const firstQuote = body.search(/["“]/);
+    if (firstQuote > 0) {
+        const prefix = body.slice(0, firstQuote).trim();
+        // A stray pipe/tag in the prefix means it is not a voice name; keep the
+        // legacy interpretation instead of silently swallowing it as a voice.
+        if (!/[<>|]/.test(prefix)) { voice = prefix; body = body.slice(firstQuote); }
+    }
+    const values = quotes(body);
+    const valid = /^(?:"(?:\\.|[^"\\])*"|“[^”]*”)$/.test(body) && values.length === 1 && !/<\/?talk-emo\b/i.test(body);
+    return { speaker: parts[1].trim(), tag: parts[2], voice, text: valid ? values[0] : '', valid, body };
+}
+
 export function blocks(text) {
     const source = stripExcluded(text), result = [];
     for (const m of source.matchAll(/<talk-emo\s*>([\s\S]*?)<\/talk-emo\s*>/gi)) {
-        const parts = /^\s*([^|<>\r\n]+)\|(orig|zh|en|ja)\|([\s\S]*)$/.exec(m[1]);
-        const body = parts?.[3]?.trim() || '', values = quotes(body);
-        const valid = Boolean(parts && /^(?:"(?:\\.|[^"\\])*"|“[^”]*”)$/.test(body) && values.length === 1 && !/<\/?talk-emo\b/i.test(body));
-        result.push({ start:m.index, end:m.index + m[0].length, raw:m[0], speaker:parts?.[1]?.trim() || '', tag:parts?.[2] || '',
-            text:valid ? values[0] : '', valid, paired:true, protocol:'talk-emo', visible:'' });
+        const parsed = parseTalkEmo(m[1]);
+        result.push({ start:m.index, end:m.index + m[0].length, raw:m[0], speaker:parsed?.speaker || '', tag:parsed?.tag || '',
+            voice:parsed?.voice || '', text:parsed?.text || '', valid:Boolean(parsed?.valid), paired:true, protocol:'talk-emo', visible:'' });
     }
     result.sort((a,b) => a.start - b.start);
     result.forEach((b,i) => { b.block = i; });
@@ -30,7 +48,7 @@ export function blocks(text) {
 }
 
 export function segmentFromBlock(b, language) {
-    if (b?.protocol === 'talk-emo' || b?.protocol === 'plain') return b.valid ? { speaker:b.speaker, language:b.tag, text:b.text, block:b.block, paired:b.protocol==='talk-emo', protocol:b.protocol } : null;
+    if (b?.protocol === 'talk-emo' || b?.protocol === 'plain') return b.valid ? { speaker:b.speaker, language:b.tag, text:b.text, voice:b.voice || '', block:b.block, paired:b.protocol==='talk-emo', protocol:b.protocol } : null;
     return null;
 }
 
@@ -64,7 +82,7 @@ export function extract(text, { language = 'orig', speaker = '', fallback = true
             if (segment) segments.push(segment);
         }
     } else if (fallback && language === 'orig') {
-        for (const value of quotes(source)) segments.push({ speaker, language, text: value, block: segments.length, paired: false });
+        for (const value of quotes(source)) segments.push({ speaker, language, text: value, voice: '', block: segments.length, paired: false });
         if (segments.length) warnings.push('普通双引号兼容模式：所有对话使用当前消息角色，无法推断其他人物。');
     }
     if (!segments.length) warnings.push('没有可播放的目标语言对话；译文必须由聊天生成模型通过世界书输出。');
@@ -98,12 +116,72 @@ export function resolveVoice(language, ...sources) {
     return '';
 }
 
-// Exactly two levels: a per-character binding, then the global default. The
-// chat-page switcher edits the global default, so both entry points always
-// show and write the same value.
+// Comparison key for a voice/spoiler name: full-width and half-width fold
+// together, whitespace and common punctuation are ignored, so "中野二乃",
+// "中野 二乃" and "Nakano Nino" style labels can still be matched by the raw
+// Chinese/Japanese name that appears in the roster.
+function voiceKey(value) {
+    return String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\s\u3000·・_\-()（）\[\]【】「」『』"'“”‘’]/g, '');
+}
+
+export function voiceAliases(entry) {
+    if (!entry || typeof entry !== 'object') return [];
+    const names = entry.names || {};
+    return [entry.id, entry.name, names.zh, names.ja, names.en, names.alias].filter(v => typeof v === 'string' && v.trim());
+}
+
+// Resolve a voice name written by the model (the third Talk-Emo field) against
+// the library. Only active voices are eligible. Any alias (id, display name,
+// zh/ja/en name, romaji) matches.
+export function findVoiceByToken(token, library) {
+    const key = voiceKey(token);
+    if (!key) return '';
+    for (const entry of library || []) {
+        if (!entry || entry.active === false) continue;
+        if (voiceAliases(entry).some(alias => voiceKey(alias) === key)) return entry.id;
+    }
+    return '';
+}
+
+// Match a Talk-Emo speaker name to a library voice by name. This is the
+// "automatic selection" fallback, so a character called the same as an imported
+// voice gets that voice without any manual binding.
+export function matchSpeakerVoice(speaker, library, language) {
+    const key = voiceKey(speaker);
+    if (!key) return '';
+    for (const entry of library || []) {
+        if (!entry || entry.active === false) continue;
+        if (language && Array.isArray(entry.languages) && entry.languages.length && !entry.languages.includes(language)) continue;
+        const names = entry.names || {};
+        const candidates = [entry.name, names.zh, names.ja, names.en, names.alias].filter(v => typeof v === 'string' && v.trim());
+        if (candidates.some(c => voiceKey(c) === key)) return entry.id;
+    }
+    return '';
+}
+
+// Voice resolution precedence (highest first):
+//   1. voice name written by the model in the Talk-Emo third field
+//   2. a manual per-character binding in the settings panel
+//   3. the speaker's name matched against the voice library
+//   4. the per-language default voice
+// autoVoice turns steps 1 & 3 off; autoMulti (off) collapses everything to the
+// per-language default (single-voice read), which is what the "自动多人配音"
+// switch controls.
 export function voiceFor(segment, settings) {
+    const library = Array.isArray(settings.voiceLibrary) ? settings.voiceLibrary : [];
+    if (settings.autoMulti === false) return resolveVoice(segment.language, settings.defaultVoice);
+    if (settings.autoVoice !== false && segment.voice) {
+        const byToken = findVoiceByToken(segment.voice, library);
+        if (byToken) return byToken;
+    }
     const row = Object.hasOwn(settings.voices, segment.speaker) ? settings.voices[segment.speaker] : null;
-    return resolveVoice(segment.language, row, settings.defaultVoice);
+    const manual = resolveVoice(segment.language, row);
+    if (manual) return manual;
+    if (settings.autoVoice !== false) {
+        const byName = matchSpeakerVoice(segment.speaker, library, segment.language);
+        if (byName) return byName;
+    }
+    return resolveVoice(segment.language, settings.defaultVoice);
 }
 
 export function dialogueRecords(text, settings) {
@@ -147,4 +225,41 @@ export function upgradeWorldbook(old, template, language) {
         data.entries[uid] = { ...structuredClone(entry), uid };
     }
     return selectLanguage(data, language);
+}
+
+export const ROSTER_MARKERS = Object.freeze({ start: '<!-- FISH_VOICE_ROSTER_START -->', end: '<!-- FISH_VOICE_ROSTER_END -->' });
+
+export function rosterDisplayName(entry, language) {
+    const names = entry?.names || {};
+    const preferred = language === 'ja' ? [names.ja, entry?.name] : language === 'en' ? [names.en, names.alias, entry?.name] : [names.zh, entry?.name];
+    return preferred.find(value => typeof value === 'string' && value.trim()) || entry?.name || entry?.id || '';
+}
+
+// Renders the managed roster block appended to each language worldbook entry.
+// Only active voices usable in this language are listed. The model reads this to
+// choose the third-field name; no per-voice request happens at render time.
+export function buildRosterSection(entries, language) {
+    const list = (entries || []).filter(entry => entry && entry.active !== false
+        && (!Array.isArray(entry.languages) || !entry.languages.length || entry.languages.includes(language)));
+    const header = language === 'en' ? '## Voice Roster (third field)' : '## 音色名册（第三字段）';
+    const rule = language === 'en'
+        ? 'Fill the third field with a voice name, e.g. <Talk-Emo>Name|en|VoiceName"line"</Talk-Emo>; leave it empty when none fits.'
+        : `在各 <Talk-Emo> 行第三字段（语言后、左引号前）填写音色名，例：<Talk-Emo>角色|${language}|音色名"台词"</Talk-Emo>；下方无合适音色时第三字段留空。`;
+    const lines = list.map(entry => {
+        const display = rosterDisplayName(entry, language);
+        const names = entry.names || {};
+        const aliases = [names.ja, names.alias].filter(alias => alias && alias !== display);
+        const aliasText = aliases.length ? '（' + aliases.join(' / ') + '）' : '';
+        const guide = typeof entry.guide === 'string' && entry.guide.trim() ? '：' + entry.guide.trim() : '';
+        return '- ' + display + aliasText + guide;
+    });
+    return [ROSTER_MARKERS.start, header, rule, ...lines, ROSTER_MARKERS.end].join('\n');
+}
+
+export function replaceRosterBlock(content, section) {
+    const text = String(content ?? '');
+    const start = text.indexOf(ROSTER_MARKERS.start), end = text.indexOf(ROSTER_MARKERS.end);
+    if (start >= 0 && end > start) return text.slice(0, start) + section + text.slice(end + ROSTER_MARKERS.end.length);
+    const separator = text && !text.endsWith('\n') ? '\n\n' : '';
+    return text + separator + section + '\n';
 }

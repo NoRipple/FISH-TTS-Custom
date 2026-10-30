@@ -31,6 +31,21 @@ export function normalizeLanguages(value) {
 
 // A missing/empty language list means "not declared", which the UI treats as
 // usable in every language slot. Filtering those out would hide most clones.
+function cleanName(value) { return typeof value === 'string' ? value.trim() : ''; }
+
+// Extra names (zh/ja/en/alias) and the human-written guide are plugin-side
+// metadata, absent from the Fish API, so they are preserved if an entry already
+// carries them and defaulted to empty/false otherwise.
+function normalizeNames(value) {
+    const source = value && typeof value === 'object' ? value : {};
+    const names = {};
+    for (const key of ['zh', 'ja', 'en', 'alias']) {
+        const name = cleanName(source[key]);
+        if (name) names[key] = name;
+    }
+    return names;
+}
+
 export function normalizeVoiceEntry(item) {
     if (!item || typeof item !== 'object') return null;
     const rawId = item._id ?? item.id;
@@ -40,8 +55,11 @@ export function normalizeVoiceEntry(item) {
     return {
         id,
         name: title || id,
+        names: normalizeNames(item.names),
         languages: normalizeLanguages(item.languages ?? item.language),
         state: typeof item.state === 'string' ? item.state : '',
+        guide: typeof item.guide === 'string' ? item.guide : '',
+        active: item.active !== false,
     };
 }
 

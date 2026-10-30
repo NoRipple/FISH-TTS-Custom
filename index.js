@@ -1,5 +1,5 @@
 import { BrowserAudioStore, synthesizeBrowser } from './browser-audio.mjs';
-import { DEFAULTS, VOICE_LANGUAGES, extract, voiceFor, resolveVoice, normalizeVoiceConfig, selectLanguage, upgradeWorldbook, blocks, dialogueRecords, segmentFromBlock, isBlocked } from './core.mjs';
+import { DEFAULTS, VOICE_LANGUAGES, extract, voiceFor, resolveVoice, normalizeVoiceConfig, selectLanguage, upgradeWorldbook, blocks, dialogueRecords, segmentFromBlock, isBlocked, buildRosterSection, replaceRosterBlock, BOOK_LANGUAGES } from './core.mjs';
 import { SpeechQueue } from './player.mjs';
 import { SynthesisQueue } from './synthesis.mjs';
 import { installInline } from './inline.mjs';
@@ -10,9 +10,11 @@ import { fetchVoiceLibrary } from './voice-library.mjs';
 const ctx = () => SillyTavern.getContext();
 const KEY = 'fish_dialogue_v1';
 const settings = ctx().extensionSettings[KEY] = { ...structuredClone(DEFAULTS), ...ctx().extensionSettings[KEY] };
-if (settings.schemaVersion !== 110) {
+if (settings.schemaVersion !== 120) {
     settings.fallback = false;
-    settings.schemaVersion = 110;
+    settings.autoVoice = settings.autoVoice !== false;
+    settings.autoMulti = settings.autoMulti !== false;
+    settings.schemaVersion = 120;
     ctx().saveSettingsDebounced();
 }
 settings.browserLibraryId ||= crypto.randomUUID();
@@ -25,56 +27,82 @@ let worldModule;
 let inline, libraryEntries = [];
 const root = document.createElement('section'); root.id = 'fish-dialogue';
 root.innerHTML = `
-<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header" role="button" tabindex="0"><b>Fish 对话音声</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content"><small>版本 1.4.7</small>
-<div class="fa-status" id="fa-status">就绪</div>
-<label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label><small>按顺序生成对白并保存到本地，不自动播放。</small>
+<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header" role="button" tabindex="0"><b>Fish 对话音声</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.5.0</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
+<label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
+<small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
 <div class="fa-row"><button id="fa-latest">聊天序号音频生成</button></div>
 <label>聊天文本序号（留空为最新回复）<input id="fa-message" type="number" min="0" class="text_pole"></label>
-<details open><summary>连接设置</summary>
-<label>Base URL（服务根地址，末尾 /v1 也可）<input id="fa-base" class="text_pole"></label>
-<label>API Key<input id="fa-key" class="text_pole" type="password" autocomplete="off"></label>
-<button id="fa-key-save">保存API KEY</button><small>保存到账户设置；留空保存可清除。账户设置备份可能包含此密钥。</small>
-<label>语音引擎<input id="fa-model" class="text_pole" type="text" placeholder="s2.1-pro-free"></label>
-<small>需启用酒馆 enableCorsProxy 并重启；用试听验证连接。</small>
+<div class="fa-sub"><div class="fa-subhead">默认音色（按语言）</div>
+<div class="fa-row"><button id="fa-preview-default" type="button">试听默认音色</button></div>
+<small class="fa-hint">与聊天页输入框上方的音色开关是同一份设置，改任意一处另一处同步。</small>
+<div id="fa-default"></div></div>
+<div class="fa-sub"><div class="fa-subhead">自动匹配策略</div>
+<label class="checkbox_label"><input id="fa-auto-voice" type="checkbox"> 自动选择音色</label>
+<small class="fa-hint">未手动绑定的角色，优先用模型第三字段的音色名，其次按角色名匹配音色库。</small>
+<label class="checkbox_label"><input id="fa-auto-multi" type="checkbox"> 自动多人配音</label>
+<small class="fa-hint">开启后逐句按各角色音色合成；关闭则所有句子都用当前语言的默认音色。</small></div>
 </details>
-<details open><summary>语言与世界书</summary>
-<label>专用世界书名称<input id="fa-book" class="text_pole"></label>
-<label>输出语言<select id="fa-language"><option value="orig">原文（关闭配音世界书）</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option></select></label>
-<div class="fa-row"><button id="fa-apply-language">应用语言</button><button id="fa-install-book">安装 / 挂载世界书</button><button id="fa-upgrade-book">升级世界书</button><button id="fa-add-regex">添加正则</button></div>
-<small>语言选择在“应用”成功后生效；只改变下一次聊天生成的提示词，旧消息不会自动翻译。挂载为全局世界书，语言条目为该账户所有聊天共享。</small>
-<label class="checkbox_label"><input id="fa-fallback" type="checkbox"> 无标记时兼容普通双引号</label>
-</details>
-<details open><summary>音色库 <span class="fa-version">Fish 收藏</span></summary>
+<details open class="fa-sec"><summary><i class="fa-solid fa-microphone-lines"></i><span>音色</span><span class="fa-badge" id="fa-badge-voices"></span></summary>
+<div class="fa-sub"><div class="fa-subhead">音色库</div>
 <div class="fa-row"><button id="fa-library-sync">从 Fish 同步</button><small id="fa-voicecount">未同步</small></div>
-<small>同步只读取你 Fish 账号中已创建或已收藏的音色；语言按音色自带标记归类，未标注语言的音色在三种语言下都可选。库只影响选择列表，不会修改 Fish 上的任何音色。</small>
+<div class="fa-row"><button id="fa-import-roster">导入内置音色（28）</button></div>
+<small class="fa-hint">同步只读取你 Fish 账号中已创建或已收藏的音色；未标注语言的音色在三种语言下都可选。库只影响选择列表，不会修改 Fish 上的任何音色。</small>
 <div id="fa-voicelib"></div>
 <div class="fa-lib-add"><input id="fa-lib-name" class="text_pole" placeholder="名称（可留空）"><input id="fa-lib-id" class="text_pole" placeholder="音色 ID"><select id="fa-lib-lang" class="text_pole"><option value="">通用</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option></select><button id="fa-lib-add">手动添加</button></div>
-</details>
-<details open><summary>角色音色</summary>
-<div class="fa-default-heading"><span>默认音色（按语言）</span><button id="fa-preview-default" type="button">试听默认音色</button></div>
-<small>与聊天页输入框上方的音色开关是同一份设置，改任意一处另一处同步。</small>
-<div id="fa-default"></div>
+</div>
+<div class="fa-sub"><div class="fa-subhead">角色绑定</div>
+<div id="fa-voices"></div>
+<div class="fa-row"><button id="fa-add">添加角色</button><button id="fa-save-voices">保存角色绑定</button></div>
 <label class="checkbox_label"><input id="fa-block-enabled" type="checkbox"> 启用角色屏蔽</label>
 <label>屏蔽角色名字（每行一个，精确匹配）<textarea id="fa-block-names" class="text_pole" rows="2" placeholder="例如：屏蔽角色名字"></textarea></label>
-<small>屏蔽只影响语音，中文对白照常显示。修改后立即停止当前队列。</small>
-<small>角色名须与世界书输出完全一致；某语言留空即使用下面的默认音色。</small>
-<div id="fa-voices"></div><button id="fa-add">添加角色</button><button id="fa-save-voices">保存角色绑定</button>
+<small class="fa-hint">屏蔽只影响语音，中文对白照常显示。修改后立即停止当前队列。</small>
+<small class="fa-hint">角色名须与世界书输出完全一致；某语言留空即使用默认音色。</small>
+</div>
 </details>
-<details><summary>合成进度 / 已生成语音 <span class="fa-version">本地保存</span></summary>
-<div id="fa-progress-summary" role="status">尚无合成任务</div><progress id="fa-progress-bar" max="1" value="0"></progress>
-<div class="fa-row"><button id="fa-cancel-generation">取消合成队列</button></div>
+<details open class="fa-sec"><summary><i class="fa-solid fa-book"></i><span>世界书与语言</span></summary>
+<label>输出语言<select id="fa-language"><option value="orig">原文（关闭配音世界书）</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option></select></label>
+<small class="fa-hint">语言选择在“应用”成功后生效；只改变下一次聊天生成的提示词，旧消息不会自动翻译。</small>
+<div class="fa-row"><button id="fa-apply-language">应用语言</button><button id="fa-add-regex">添加正则</button></div>
+<label>专用世界书名称<input id="fa-book" class="text_pole"></label>
+<div class="fa-row"><button id="fa-install-book">安装 / 挂载世界书</button><button id="fa-upgrade-book" class="fa-btn-danger">升级世界书</button></div>
+<div class="fa-row"><button id="fa-sync-roster">同步音色名册到世界书</button></div>
+<small class="fa-hint">名册按中日英分别写入世界书三条语言条目，只含“已激活”的音色；取消激活后再次同步即从世界书移除。挂载为全局世界书，语言条目为该账户所有聊天共享。</small>
+<label class="checkbox_label"><input id="fa-fallback" type="checkbox"> 无标记时兼容普通双引号</label>
+</details>
+<details class="fa-sec"><summary><i class="fa-solid fa-gauge-high"></i><span>运行与存储</span><span class="fa-badge" id="fa-badge-jobs"></span></summary>
+<div class="fa-sub"><div class="fa-subhead">合成进度</div>
+<div id="fa-progress-summary" role="status">尚无合成任务</div>
+<progress id="fa-progress-bar" max="1" value="0"></progress>
+<div class="fa-row"><button id="fa-cancel-generation" class="fa-btn-danger">取消合成队列</button></div>
 <label>最大并发请求数（1–10）<input id="fa-concurrency" type="number" min="1" max="10" step="1" class="text_pole"></label>
-<small>并发越高出音越快。Fish 有速率上限，日志出现 HTTP 429 时请调低；酒馆的 CorsProxy 同样按并发出站，数值过高可能触发服务端连接数告警。</small>
-<small>字节数来自浏览器实际接收量。上游不提供总长度时不显示虚构百分比。</small><div id="fa-progress-list"></div>
+<small class="fa-hint">并发越高出音越快。Fish 有速率上限，日志出现 HTTP 429 时请调低；酒馆的 CorsProxy 同样按并发出站，数值过高可能触发服务端连接数告警。</small>
+<small class="fa-hint">字节数来自浏览器实际接收量。上游不提供总长度时不显示虚构百分比。</small>
+<div id="fa-progress-list"></div>
+</div>
+<div class="fa-sub"><div class="fa-subhead">已生成语音（本地保存）</div>
 <div class="fa-row"><button id="fa-library-refresh">刷新语音列表</button></div>
-<small id="fa-library-path">保存在当前浏览器中；清除网站数据会删除音频。可逐条下载。</small>
+<small class="fa-hint" id="fa-library-path">保存在当前浏览器中；清除网站数据会删除音频。可逐条下载。</small>
 <label>最大保留数量（1–10000）<input id="fa-limit" type="number" min="1" max="10000" value="200" class="text_pole"></label>
-<button id="fa-limit-save">保存数量并清理超出的最旧音频</button>
-<small>只清理本插件保存的文件。被清理的句子再次点击时可重新生成。</small>
+<button id="fa-limit-save" class="fa-btn-danger">保存数量并清理超出的最旧音频</button>
+<small class="fa-hint">只清理本插件保存的文件。被清理的句子再次点击时可重新生成。</small>
 <div id="fa-library-list"></div>
+</div>
 </details>
-<details><summary>日志</summary><div class="fa-row"><button id="fa-log-export">导出日志</button><button id="fa-log-clear">清空日志</button></div><pre id="fa-logs"></pre></details>
-</div></div>`;
+<details class="fa-sec"><summary><i class="fa-solid fa-plug"></i><span>连接</span></summary>
+<label>Base URL（服务根地址，末尾 /v1 也可）<input id="fa-base" class="text_pole"></label>
+<label>API Key<input id="fa-key" class="text_pole" type="password" autocomplete="off"></label>
+<button id="fa-key-save">保存API KEY</button><small class="fa-hint">保存到账户设置；留空保存可清除。账户设置备份可能包含此密钥。</small>
+<label>语音引擎<input id="fa-model" class="text_pole" type="text" placeholder="s2.1-pro-free"></label>
+<small class="fa-hint">需启用酒馆 enableCorsProxy 并重启；用试听验证连接。</small>
+</details>
+<details class="fa-sec"><summary><i class="fa-solid fa-screwdriver-wrench"></i><span>高级 · 维护</span></summary>
+<div class="fa-row"><button id="fa-log-export">导出日志</button><button id="fa-log-clear" class="fa-btn-danger">清空日志</button></div>
+<pre id="fa-logs"></pre>
+</details>
+</div></div>
+`;
 (document.querySelector('#extensions_settings2') || document.querySelector('#extensions_settings') || document.body).append(root);
 for (const button of root.querySelectorAll('button')) button.classList.add('menu_button');
 root.querySelector('.inline-drawer-header').addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.currentTarget.click();}});
@@ -136,6 +164,7 @@ function renderProgress() {
     for(const task of tasks) if(task.status==='failed' && !task.errorReported){task.errorReported=true;log('ERROR',task.error);}
     const counts = {ready:0,failed:0,canceled:0};
     for(const t of tasks) if(t.status in counts) counts[t.status]++;
+    $('badge-jobs').textContent = tasks.length ? (counts.ready + '/' + tasks.length) : '';
     $('progress-summary').textContent = tasks.length ? '已就绪 '+counts.ready+' / '+tasks.length+' · 失败 '+counts.failed+' · 取消 '+counts.canceled+(generator.memoryPaused?' · 缓冲已满，播放后继续合成':'') : '尚无合成任务';
     $('progress-bar').max=Math.max(1,tasks.length); $('progress-bar').value=counts.ready+counts.failed+counts.canceled;
     const rows=tasks.slice(-100).map(t=>{
@@ -193,7 +222,7 @@ function fillSelect(select, language, current) {
     for (const entry of voiceLibrary) {
         if (!entryMatches(entry, language) || seen.has(entry.id)) continue;
         seen.add(entry.id);
-        options.push({ value: entry.id, label: entry.languages.length ? entry.name : entry.name + '（通用）' });
+        options.push({ value: entry.id, label: (entry.languages.length ? entry.name : entry.name + '（通用）') + (entry.active === false ? ' · 未激活' : '') });
     }
     // A configured id absent from the library stays selectable; otherwise merely
     // opening the panel would silently drop an existing binding.
@@ -208,15 +237,24 @@ function renderVoiceLibrary() {
     $('voicecount').textContent = voiceLibrary.length ? voiceLibrary.length + ' 个音色' : '未同步';
     for (const entry of voiceLibrary) {
         const row = document.createElement('div'); row.className = 'fa-lib-item';
-        const name = document.createElement('span'); name.textContent = entry.name;
+        const head = document.createElement('div'); head.className = 'fa-lib-head';
+        const active = document.createElement('input'); active.type = 'checkbox'; active.checked = entry.active !== false;
+        active.title = '激活后才会同步到世界书名册';
+        active.addEventListener('change', () => { entry.active = active.checked; settings.voiceLibrary = voiceLibrary; save(); });
+        const name = document.createElement('input'); name.className = 'text_pole fa-lib-name'; name.value = entry.name || entry.id; name.title = '可修改显示名称（同名亦可用于按角色名自动匹配）';
+        name.addEventListener('change', () => {
+            const value = name.value.trim();
+            if (value) { entry.name = value; settings.voiceLibrary = voiceLibrary; save(); refreshVoiceSelectors(); log('INFO', '音色名称已改为 ' + value); }
+            else name.value = entry.name || entry.id;
+        });
         const meta = document.createElement('small');
-        meta.textContent = (entry.languages.length ? entry.languages.map(languageLabel).join('/') : '通用') + (entry.state && entry.state !== 'trained' ? ' · ' + entry.state : '');
+        meta.textContent = (entry.languages.length ? entry.languages.map(languageLabel).join('/') : '通用') + (entry.state && entry.state !== 'trained' ? ' · ' + entry.state : '') + (entry.active === false ? ' · 未激活' : '');
         const play = document.createElement('button'); play.type = 'button'; play.textContent = '▶ 试听';
         play.onclick = () => {
             try {
                 if (queue.running && queue.current?.preview) { queue.stop(); return; }
                 queue.stop();
-                queue.enqueue([voicePreview({ voice: entry.id, language: entry.languages[0] || settings.language, settings })]);
+                queue.enqueue([voicePreview({ voice: entry.id, language: entry.languages[0] || (settings.language === 'orig' ? 'zh' : settings.language), settings })]);
             } catch (e) { log('ERROR', e.message); }
         };
         const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '删除';
@@ -225,7 +263,18 @@ function renderVoiceLibrary() {
             settings.voiceLibrary = voiceLibrary; save(); refreshVoiceSelectors();
             log('INFO', '已从音色库移除 ' + entry.name);
         };
-        row.append(name, meta, play, remove); $('voicelib').append(row);
+        head.append(active, name, meta, play, remove);
+        row.append(head);
+        if (entry.guide) { const guide = document.createElement('small'); guide.className = 'fa-lib-guide'; guide.textContent = entry.guide; row.append(guide); }
+        $('voicelib').append(row);
+    }
+    const activeCount = voiceLibrary.filter(e => e.active !== false).length;
+    $('badge-voices').textContent = voiceLibrary.length ? activeCount + '/' + voiceLibrary.length : '';
+    $('chip-active').textContent = voiceLibrary.length ? '音色 ' + activeCount + '/' + voiceLibrary.length : '音色 —';
+    if (!voiceLibrary.length) {
+        const empty = document.createElement('div'); empty.className = 'fa-empty';
+        empty.textContent = '还没有音色：点上方“导入内置音色（28）”或“从 Fish 同步”开始。';
+        $('voicelib').append(empty);
     }
 }
 function renderDefaultVoiceSelects() {
@@ -241,6 +290,8 @@ function renderDefaultVoiceSelects() {
         select.addEventListener('change', () => setDefaultVoice(language, select.value));
         wrap.append(caption, select); host.append(wrap);
     }
+    const filled = VOICE_LANGUAGES.filter(l => config[l] || config.default).length;
+    $('chip-default').textContent = '默认音色 ' + filled + '/' + VOICE_LANGUAGES.length;
 }
 function addVoice(name = '', langs = {}) {
     const row = document.createElement('div'); row.className = 'fa-voice';
@@ -286,6 +337,63 @@ click('lib-add', () => {
     $('lib-name').value = ''; $('lib-id').value = ''; $('lib-lang').value = '';
     refreshVoiceSelectors(); log('INFO', '已添加音色 ' + (name || id));
 });
+function importRosterEntries(roster) {
+    let added = 0;
+    const byId = new Map(voiceLibrary.map(entry => [entry.id, entry]));
+    for (const item of Array.isArray(roster) ? roster : []) {
+        if (!item || !item.id) continue;
+        const existing = byId.get(item.id);
+        if (existing) {
+            if (!existing.guide && item.guide) existing.guide = item.guide;
+            if (item.names) existing.names = { ...item.names, ...(existing.names || {}) };
+            if (existing.active === undefined) existing.active = item.active !== false;
+        } else {
+            byId.set(item.id, { id: item.id, name: item.name || item.id, names: item.names || {},
+                languages: Array.isArray(item.languages) ? item.languages : [], state: '',
+                guide: item.guide || '', active: item.active !== false });
+            added++;
+        }
+    }
+    voiceLibrary = [...byId.values()]; settings.voiceLibrary = voiceLibrary; save(); refreshVoiceSelectors();
+    return added;
+}
+async function loadRoster() {
+    const r = await fetch(new URL('./fish-roster.json', import.meta.url));
+    if (!r.ok) throw new Error('扩展目录缺少 fish-roster.json');
+    return r.json();
+}
+click('import-roster', async () => {
+    const added = importRosterEntries(await loadRoster());
+    log('INFO', `已导入内置音色 ${added} 个（已存在的仅补全信息）`);
+    $('status').textContent = `内置音色导入完成，新增 ${added} 个`;
+});
+click('sync-roster', async () => {
+    const w = await world(), name = settings.book;
+    if (!w.world_names.includes(name)) throw new Error('请先安装世界书');
+    const data = await w.loadWorldInfo(name);
+    let updated = 0;
+    for (const [language, comment] of Object.entries(BOOK_LANGUAGES)) {
+        const entry = Object.values(data.entries || {}).find(e => e.comment === comment);
+        if (!entry) continue;
+        entry.content = replaceRosterBlock(entry.content, buildRosterSection(voiceLibrary, language));
+        updated++;
+    }
+    if (!updated) throw new Error('世界书缺少 FA_FORMAT 语言条目，请先安装或升级世界书');
+    await writeBook(name, data);
+    const active = voiceLibrary.filter(e => e.active !== false).length;
+    log('INFO', `音色名册已写入世界书（${updated} 条 · 激活音色 ${active} 个）`);
+    $('status').textContent = '音色名册已同步到世界书';
+});
+async function applyVoiceGuides() {
+    try {
+        const r = await fetch(new URL('./voice-guides.json', import.meta.url));
+        if (!r.ok) return;
+        const map = await r.json();
+        let filled = 0;
+        for (const entry of voiceLibrary) if (!entry.guide && map[entry.id]) { entry.guide = map[entry.id]; filled++; }
+        if (filled) { settings.voiceLibrary = voiceLibrary; save(); renderVoiceLibrary(); log('INFO', '已补全 ' + filled + ' 条音色指南'); }
+    } catch (e) { log('WARN', '音色指南加载失败：' + e.message); }
+}
 click('preview-default', () => {
     if (queue.running && queue.current?.preview) { queue.stop(); return; }
     const language = settings.language === 'orig' ? 'zh' : settings.language;
@@ -332,6 +440,13 @@ function renderChatSwitcher() {
 renderVoiceLibrary(); renderDefaultVoiceSelects();
 renderVoiceRows(Object.entries(settings.voices).map(([name, config]) => ({ name, langs: normalizeVoiceConfig(config) })));
 mountChatSwitcher(); renderChatSwitcher();
+(async function bootstrapRoster() {
+    if (!settings.rosterImported) {
+        try { importRosterEntries(await loadRoster()); settings.rosterImported = 1; save(); log('INFO', '已自动导入内置音色'); }
+        catch (e) { log('WARN', '内置音色自动导入失败：' + e.message); }
+    }
+    await applyVoiceGuides();
+})();
 async function synthesizeRaw(item, signal, update) {
         if (isBlocked(item.speaker, settings)) throw new Error('该角色已屏蔽，不会向 API 发送对白');
         
@@ -402,11 +517,12 @@ function bind(id, name, checkbox = false) {
         settings[name] = value; save();
         if (['baseUrl', 'model'].includes(name)) stopAll();
         if (name === 'auto' && !value) stopAll();
-        if (name === 'blockEnabled' || name === 'blockedNames' || name === 'fallback') { stopAll(); inline?.schedule(); }
+        if (name === 'blockEnabled' || name === 'blockedNames' || name === 'fallback' || name === 'autoVoice' || name === 'autoMulti') { stopAll(); inline?.schedule(); }
     });
 }
 bind('auto', 'auto', true); bind('fallback', 'fallback', true);
 bind('block-enabled', 'blockEnabled', true); bind('block-names', 'blockedNames');
+bind('auto-voice', 'autoVoice', true); bind('auto-multi', 'autoMulti', true);
 if (typeof settings.model !== 'string' || !settings.model.trim()) { settings.model=DEFAULTS.model; save(); }
 bind('base', 'baseUrl'); bind('model', 'model'); bind('book', 'book');
 $('language').value = settings.language;
@@ -549,4 +665,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); mountChatSwitcher(); renderChatSwitcher(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.4.7 已加载；请点“升级世界书”和“添加正则”，启用 Talk-Emo 协议。');
+log('INFO', '1.5.0 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');

@@ -1,7 +1,7 @@
 // Pure-logic self test. No SillyTavern, no browser, no dependencies:
 //   node test-core.mjs
 import assert from 'node:assert/strict';
-import { normalizeVoiceConfig, resolveVoice, voiceFor, VOICE_LANGUAGES } from './core.mjs';
+import { normalizeVoiceConfig, resolveVoice, voiceFor, VOICE_LANGUAGES, blocks, segmentFromBlock, findVoiceByToken, matchSpeakerVoice, buildRosterSection, replaceRosterBlock, ROSTER_MARKERS } from './core.mjs';
 import { normalizeLanguage, normalizeLanguages, normalizeVoiceEntry, mergeVoiceEntries, voiceLibraryRequest, fetchVoiceLibrary } from './voice-library.mjs';
 import { voicePreview } from './preview.mjs';
 import { SynthesisQueue, clampConcurrency, DEFAULT_CONCURRENCY, MAX_CONCURRENCY } from './synthesis.mjs';
@@ -39,6 +39,85 @@ t('角色绑定压过全局默认的 default 键', () => assert.equal(voiceFor({
 t('老字符串配置仍然可用', () => assert.equal(voiceFor({ speaker: '陈锋', language: 'ja' }, { voices: { 陈锋: 'LEGACY' }, defaultVoice: '' }), 'LEGACY'));
 t('orig 语言回落 default', () => assert.equal(voiceFor({ speaker: '林遥', language: 'orig' }, { voices: {}, defaultVoice: 'D' }), 'D'));
 t('完全无配置返回空串（enqueue 会据此报错）', () => assert.equal(voiceFor({ speaker: '林遥', language: 'zh' }, { voices: {}, defaultVoice: '' }), ''));
+
+console.log('— core: 第三字段音色解析 —');
+t('带音色名：解析出 voice 与台词', () => {
+    const [b] = blocks('<Talk-Emo>林遥|ja|早见沙织"[Trembling voice]先に教えて。"</Talk-Emo>');
+    assert.equal(b.speaker, '林遥'); assert.equal(b.tag, 'ja'); assert.equal(b.voice, '早见沙织');
+    assert.equal(b.text, '[Trembling voice]先に教えて。'); assert.equal(b.valid, true);
+});
+t('空音色名：完全兼容旧格式', () => {
+    const [b] = blocks('<Talk-Emo>林遥|ja|"こんにちは"</Talk-Emo>');
+    assert.equal(b.voice, ''); assert.equal(b.text, 'こんにちは'); assert.equal(b.valid, true);
+});
+t('音色名可含中文/空格/括号', () => {
+    const [b] = blocks('<Talk-Emo>甲|zh|樱木 真乃（Shiny）"你好"</Talk-Emo>');
+    assert.equal(b.voice, '樱木 真乃（Shiny）'); assert.equal(b.text, '你好'); assert.equal(b.valid, true);
+});
+t('正文无引号则非法', () => {
+    const [b] = blocks('<Talk-Emo>甲|zh|音色名你好</Talk-Emo>');
+    assert.equal(b.valid, false);
+});
+t('segmentFromBlock 带出 voice', () => {
+    const [b] = blocks('<Talk-Emo>甲|zh|V"嗨"</Talk-Emo>');
+    assert.equal(segmentFromBlock(b, {}).voice, 'V');
+});
+
+console.log('— core: 音色优先级（模型 > 手动 > 名字 > 默认）—');
+const lib = [
+    { id: 'id-mano', name: '樱木真乃', names: { zh: '樱木真乃', ja: '樱木真乃', alias: 'Sakuragi Mano' }, languages: ['ja'], active: true },
+    { id: 'id-hiori', name: '风野灯织', names: { zh: '风野灯织', ja: '風野灯織', alias: 'Kazano Hiori' }, languages: ['ja'], active: true },
+    { id: 'id-off', name: '冬优子', names: { zh: '冬优子', ja: '黛冬優子' }, languages: ['ja'], active: false },
+];
+const base = { voices: { 林遥: { ja: 'MANUAL' } }, defaultVoice: { ja: 'DEFAULT' }, voiceLibrary: lib, autoVoice: true, autoMulti: true };
+t('1 模型音色名优先于手动绑定', () => assert.equal(voiceFor({ speaker: '林遥', language: 'ja', voice: '风野灯织' }, base), 'id-hiori'));
+t('2 无模型名用手动绑定', () => assert.equal(voiceFor({ speaker: '林遥', language: 'ja', voice: '' }, base), 'MANUAL'));
+t('3 无手动绑定按角色名匹配', () => assert.equal(voiceFor({ speaker: '樱木真乃', language: 'ja', voice: '' }, base), 'id-mano'));
+t('3b 罗马音别名也匹配', () => assert.equal(voiceFor({ speaker: 'Sakuragi Mano', language: 'ja', voice: '' }, base), 'id-mano'));
+t('4 都未命中回退默认', () => assert.equal(voiceFor({ speaker: '路人', language: 'ja', voice: '' }, base), 'DEFAULT'));
+t('未激活音色不参与匹配', () => assert.equal(voiceFor({ speaker: '冬优子', language: 'ja', voice: '黛冬優子' }, base), 'DEFAULT'));
+t('autoVoice=false 关闭模型名与名字匹配，仅手动', () => {
+    const s = { ...base, autoVoice: false };
+    assert.equal(voiceFor({ speaker: '林遥', language: 'ja', voice: '风野灯织' }, s), 'MANUAL');
+    assert.equal(voiceFor({ speaker: '樱木真乃', language: 'ja', voice: '' }, s), 'DEFAULT');
+});
+t('autoMulti=false 全部用默认音色', () => {
+    const s = { ...base, autoMulti: false };
+    assert.equal(voiceFor({ speaker: '林遥', language: 'ja', voice: '风野灯织' }, s), 'DEFAULT');
+});
+t('findVoiceByToken 忽略大小写与标点', () => {
+    assert.equal(findVoiceByToken('sakuragi-mano', lib), 'id-mano');
+    assert.equal(findVoiceByToken(' 风野灯织 ', lib), 'id-hiori');
+    assert.equal(findVoiceByToken('没人', lib), '');
+});
+t('matchSpeakerVoice 语言不匹配则跳过', () => {
+    assert.equal(matchSpeakerVoice('樱木真乃', lib, 'zh'), '');
+    assert.equal(matchSpeakerVoice('樱木真乃', lib, 'ja'), 'id-mano');
+});
+
+console.log('— core: 世界书名册 —');
+t('只列激活且匹配语言的音色，含指南', () => {
+    const section = buildRosterSection([
+        { id: 'a', name: '甲', names: { zh: '甲', ja: '甲' }, languages: ['ja'], active: true, guide: '适合少女' },
+        { id: 'b', name: '乙', names: { zh: '乙' }, languages: [], active: true },
+        { id: 'c', name: '丙', languages: ['ja'], active: false },
+        { id: 'd', name: '丁', languages: ['zh'], active: true },
+    ], 'ja');
+    assert.ok(section.startsWith(ROSTER_MARKERS.start));
+    assert.ok(section.trim().endsWith(ROSTER_MARKERS.end));
+    assert.ok(section.includes('甲') && section.includes('适合少女'));
+    assert.ok(section.includes('乙'));
+    assert.ok(!section.includes('丙'));
+    assert.ok(!section.includes('丁'));
+});
+t('replaceRosterBlock 幂等替换且保留原文', () => {
+    const original = '# 格式\n一些正文。';
+    const s1 = replaceRosterBlock(original, buildRosterSection([], 'zh'));
+    const s2 = replaceRosterBlock(s1, buildRosterSection([], 'zh'));
+    assert.equal(s1, s2);
+    assert.ok(s1.startsWith(original));
+    assert.equal((s2.match(/FISH_VOICE_ROSTER_START/g) || []).length, 1);
+});
 
 console.log('— voice-library: 语言归一化 —');
 t('ISO 短码', () => { assert.equal(normalizeLanguage('ja'), 'ja'); assert.equal(normalizeLanguage('ZH'), 'zh'); });
