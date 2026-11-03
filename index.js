@@ -31,10 +31,8 @@ const audio = new Audio(); audio.preload = 'auto';
 const logs = [], seen = new Map();
 let worldModule;
 let inline, libraryEntries = [];
-const root = document.createElement('section'); root.id = 'fish-dialogue';
-root.innerHTML = `
-<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header" role="button" tabindex="0"><b>Fish 对话音声</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.6.1</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+export const SETTINGS_MARKUP = `
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.6.2</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -54,7 +52,7 @@ root.innerHTML = `
 <small class="fa-hint">开启后逐句按各角色音色合成；关闭则所有句子都用当前语言的默认音色。</small></div>
 </details>
 <details class="fa-sec"><summary><i class="fa-solid fa-microphone-lines"></i><span>音色与角色绑定</span><span class="fa-badge" id="fa-badge-voices"></span></summary>
-<div class="fa-row"><button id="fa-open-voices">打开音色管理</button><small id="fa-voicecount">未同步</small></div>
+<div class="fa-row"><small id="fa-voicecount">未同步</small></div>
 <div class="fa-row"><button id="fa-library-sync">从 Fish 同步</button><button id="fa-import-roster">导入内置音色（28）</button></div>
 <small class="fa-hint">分组、批量启停、修改音色 ID、搜索 Fish 公开音色、一次性克隆都在音色管理弹窗里。也可以从顶栏的魔法棒菜单打开。</small>
 <div class="fa-sub"><div class="fa-subhead">角色绑定</div>
@@ -103,14 +101,17 @@ root.innerHTML = `
 <div class="fa-row"><button id="fa-log-export">导出日志</button><button id="fa-log-clear" class="fa-btn-danger">清空日志</button></div>
 <pre id="fa-logs"></pre>
 </details>
-</div></div>
 `;
-(document.querySelector('#extensions_settings2') || document.querySelector('#extensions_settings') || document.body).append(root);
-for (const button of root.querySelectorAll('button')) button.classList.add('menu_button');
-root.querySelector('.inline-drawer-header').addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.currentTarget.click();}});
-const $ = id => id === 'audio' ? audio : root.querySelector('#fa-' + id);
-// Wand menu entry. SillyTavern renders these into #extensionsMenu; the drawer link
-// stays available for users who never open that menu.
+// The settings no longer live in the extension-settings drawer: every control
+// sits in the "Fish 配音管理" dialog's 设置 tab. This host is detached (never
+// appended), so the controls can be queried and bound before the dialog exists
+// and move into the real tab when it is built.
+const settingsHost = document.createElement('div');
+settingsHost.className = 'fa-settings';
+settingsHost.innerHTML = SETTINGS_MARKUP;
+const $ = id => id === 'audio' ? audio : settingsHost.querySelector('#fa-' + id);
+// The wand menu is the only entry point now that the settings drawer is gone.
+// SillyTavern renders these into #extensionsMenu.
 function mountWandMenu() {
     const host = document.querySelector('#extensionsMenu');
     if (!host || host.querySelector('#fa-wand-voices')) return;
@@ -118,9 +119,9 @@ function mountWandMenu() {
     item.id = 'fa-wand-voices';
     item.className = 'list-group-item flex-container flexGap5 interactable';
     item.tabIndex = 0;
-    item.title = 'Fish 对话音声：音色管理';
+    item.title = 'Fish 对话音声：Fish 配音管理';
     const icon = document.createElement('div'); icon.className = 'fa-solid fa-microphone-lines extensionsMenuExtensionButton';
-    const label = document.createElement('span'); label.textContent = '音色管理';
+    const label = document.createElement('span'); label.textContent = 'Fish 配音管理';
     item.append(icon, label);
     item.addEventListener('click', () => voicePanel?.open('library'));
     item.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); voicePanel?.open('library'); } });
@@ -289,7 +290,7 @@ function renderVoiceLibrary() {
     $('chip-active').textContent = voiceLibrary.length ? '音色 ' + activeCount + '/' + voiceLibrary.length : '音色 —';
 }
 function renderDefaultVoiceSelects() {
-    const host = $('default'); host.replaceChildren();
+    const host = $('default'); if (!host) return; host.replaceChildren();
     const config = normalizeVoiceConfig(settings.defaultVoice);
     for (const language of VOICE_LANGUAGES) {
         const wrap = document.createElement('label'); wrap.className = 'fa-lang-select';
@@ -302,7 +303,8 @@ function renderDefaultVoiceSelects() {
         wrap.append(caption, select); host.append(wrap);
     }
     const filled = VOICE_LANGUAGES.filter(l => config[l] || config.default).length;
-    $('chip-default').textContent = '默认音色 ' + filled + '/' + VOICE_LANGUAGES.length;
+    const chip = $('chip-default');
+    if (chip) chip.textContent = '默认音色 ' + filled + '/' + VOICE_LANGUAGES.length;
 }
 function addVoice(name = '', langs = {}) {
     const row = document.createElement('div'); row.className = 'fa-voice';
@@ -314,18 +316,18 @@ function addVoice(name = '', langs = {}) {
         row.append(select);
     }
     const remove = document.createElement('button'); remove.textContent = '删除'; remove.onclick = () => row.remove();
-    row.append(remove); $('voices').append(row);
+    row.append(remove); $('voices')?.append(row);
 }
 function collectVoiceRows() {
     const rows = [];
-    for (const row of $('voices').children) {
+    for (const row of $('voices')?.children || []) {
         const name = row.querySelector('input').value.trim(), langs = {};
         for (const select of row.querySelectorAll('select')) if (select.value) langs[select.dataset.lang] = select.value;
         rows.push({ name, langs });
     }
     return rows;
 }
-function renderVoiceRows(rows) { $('voices').replaceChildren(); for (const row of rows) addVoice(row.name, row.langs); }
+function renderVoiceRows(rows) { $('voices')?.replaceChildren(); for (const row of rows) addVoice(row.name, row.langs); }
 // Rebuild every selector from the library. Character rows are carried across so
 // adding or removing a library voice never discards in-progress edits.
 function refreshAll() {
@@ -336,6 +338,7 @@ function refreshAll() {
 let voicePanel;
 voicePanel = installVoicePanel({
     context: ctx, settings, log, save,
+    settingsHost: settingsHost,
     library: () => voiceLibrary,
     setLibrary: next => { voiceLibrary = next; settings.voiceLibrary = next; save(); },
     refresh,
@@ -348,8 +351,15 @@ voicePanel = installVoicePanel({
     clearRefs: async () => { const usage = await refStore.usage(); await refStore.clear(); return usage.count; },
     refUsage: () => refStore.usage(),
 });
-function refresh() { refreshAll(); }
-click('open-voices', () => voicePanel.open('library'));
+// Called by the panel after each render to keep the status chips current. It
+// deliberately skips the panel itself; re-entering it from inside a render would
+// never terminate.
+function refresh() {
+    renderVoiceLibrary();
+    renderDefaultVoiceSelects();
+    renderVoiceRows(collectVoiceRows());
+}
+click('open-settings', () => voicePanel.open('settings'));
 click('library-sync', async () => {
     const entries = await fetchVoiceLibrary({ baseUrl: settings.baseUrl, apiKey });
     // Groups, clone markers and edited names are plugin-side only; a sync that
@@ -768,4 +778,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.6.1 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.6.2 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');

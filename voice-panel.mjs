@@ -16,12 +16,16 @@ const TABS = [
     ['library', '音色库', '按作品分组的全部音色'],
     ['search', '搜索音色', '从 Fish 公开库添加'],
     ['clone', '快速克隆', '上传音频做一次性克隆'],
+    ['settings', '设置', '连接、语言、运行与维护'],
 ];
+// Titles are optional so callers that predate them keep working.
+const TITLE = 'Fish 配音管理';
 
 export function installVoicePanel(deps) {
     const {
         context, settings, log, save, library, setLibrary, refresh,
         preview, search, addClone, removeRef, clearRefs, refUsage,
+        settingsHost = null, title = TITLE,
     } = deps;
     let dialog = null, tab = 'library', selection = new Set(), results = [], lastQuery = '';
     let filter = '';
@@ -176,7 +180,7 @@ export function installVoicePanel(deps) {
         dialog = el('dialog', { class: 'fa-voice-dialog', id: 'fa-voice-dialog' });
         const title = el('div', { class: 'fa-head-titles' },
             el('span', { class: 'fa-head-kicker', text: 'FISH TTS' }),
-            el('h3', { class: 'fa-head-title', text: '音色管理' }));
+            el('h3', { class: 'fa-head-title', text: title }));
         const syncBtn = deps.syncRoster
             ? el('button', {
                 class: 'fa-menu_button fa-head-sync', type: 'button', title: '把当前音色库写入世界书的三语言名册条目',
@@ -212,10 +216,28 @@ export function installVoicePanel(deps) {
         const host = body(); host.replaceChildren();
         footer().querySelector('.fa-foot-hint').textContent = tab === 'library'
             ? `${library().length} 个音色 · 点组名折叠 · 改动即时保存`
-            : tab === 'search' ? '搜索走 Fish 公开库 · 添加只进本地库' : '一次性克隆 · 音频存在本浏览器 IndexedDB';
+            : tab === 'search' ? '搜索走 Fish 公开库 · 添加只进本地库'
+                : tab === 'clone' ? '一次性克隆 · 音频存在本浏览器 IndexedDB'
+                    : '全部设置都在这里 · 改动即时保存';
         if (tab === 'library') renderLibrary(host);
         else if (tab === 'search') renderSearch(host);
+        else if (tab === 'settings') renderSettings(host);
         else renderClone(host);
+        // The settings tab owns the live controls, so the status chips only read
+        // correctly once they live inside a rendered tab.
+        deps.refresh?.();
+    }
+
+    // The whole settings form used to sit in SillyTavern's extension drawer. The
+    // markup is still owned by index.js (its handlers bind by id at module load),
+    // but the nodes are re-parented here, so the dialog is the only place to see
+    // them. Moving nodes keeps every listener and every in-progress edit intact.
+    function renderSettings(host) {
+        if (!settingsHost) {
+            host.append(hint('设置表单尚未就绪；请刷新页面后重试。'));
+            return;
+        }
+        host.append(settingsHost);
     }
 
     function renderLibrary(host) {

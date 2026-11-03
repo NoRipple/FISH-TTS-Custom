@@ -11,77 +11,26 @@
 #chat .fa-inline .fa-line-text { user-select: text; cursor: text; font-size: inherit; line-height: 1.6; max-width: 100%; word-break: break-word; }
 #chat .fa-inline.fa-line-shown .fa-line-state:empty { display: none; }
 #chat .fa-inline.fa-line-shown .fa-line-state { flex-basis: 100%; }
-#fish-dialogue label { display:block; margin:8px 0; }
-#fish-dialogue label.checkbox_label { display:flex; align-items:center; gap:6px; }
-#fish-dialogue input:not([type=checkbox]), #fish-dialogue textarea, #fish-dialogue select { width:100%; box-sizing:border-box; }
-#fish-dialogue .fa-row, #fish-dialogue .fa-voice, #fish-dialogue .fa-library-item { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-#fish-dialogue .fa-voice input { flex:1; min-width:100px; width:auto; }
-#fish-dialogue pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:260px; overflow:auto; }
-#fish-dialogue details { margin:8px 0; } #fish-dialogue summary { cursor:pointer; }
-#fish-dialogue #fa-progress-bar { width:100%; } #fish-dialogue #fa-progress-list, #fish-dialogue #fa-library-list { max-height:300px; overflow:auto; }
-#fish-dialogue .fa-job small, #fish-dialogue .fa-library-item small { display:block; } #fish-dialogue .fa-library-item { margin:8px 0; }
 .fa-error-dialog { max-width:min(90vw,520px); color:var(--SmartThemeBodyColor,inherit); background:var(--SmartThemeBlurTintColor,#333); border:1px solid; border-radius:8px; }
 .fa-error-dialog p { white-space:pre-wrap; overflow-wrap:anywhere; }
 
-/* The host owns drawer colors and its delegated open/close behavior. */
-#fish-dialogue { width:100%; min-width:0; box-sizing:border-box; }
-#fish-dialogue > .inline-drawer { width:100%; min-width:0; }
-#fish-dialogue .inline-drawer-header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-#fish-dialogue .inline-drawer-content { display:none; min-width:0; }
-#fish-dialogue button, #chat .fa-inline button, .fa-error-dialog button {
+#fa-voice-dialog .fa-settings button, #chat .fa-inline button, .fa-error-dialog button,
+#fa-quick-dock button {
  writing-mode:horizontal-tb !important; text-orientation:mixed !important;
  width:auto !important; min-width:max-content; max-width:none;
  flex:0 0 auto; white-space:nowrap !important; word-break:normal !important;
  overflow-wrap:normal !important; height:auto; line-height:1.5;
 }
-#fish-dialogue .fa-row, #fish-dialogue .fa-voice, #fish-dialogue .fa-library-item { min-width:0; }
-#fish-dialogue .inline-drawer-content { overflow-x:auto; }
 
-#fish-dialogue .fa-default-heading { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
-#fish-dialogue .fa-default-heading label { margin:8px 0; }
-
-/* Voice library */
-#fish-dialogue .fa-lib-item { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:6px 0; padding-bottom:6px; border-bottom:1px solid #ffffff14; }
-#fish-dialogue .fa-lib-item span { flex:1; min-width:120px; }
-#fish-dialogue .fa-lib-item small { opacity:.6; white-space:nowrap; }
-#fish-dialogue #fa-voicelib { max-height:300px; overflow:auto; }
-#fish-dialogue .fa-lib-add { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:8px; }
-#fish-dialogue .fa-lib-add input { flex:1; min-width:110px; width:auto; }
-#fish-dialogue .fa-lib-add select { flex:0 0 auto; width:auto; }
-#fish-dialogue .fa-lib-item { flex-direction:column; align-items:stretch; }
-#fish-dialogue .fa-lib-head { display:flex; align-items:center; gap:6px; flex-wrap:wrap; width:100%; }
-#fish-dialogue .fa-lib-head input[type=checkbox] { flex:0 0 auto; width:auto; }
-#fish-dialogue .fa-lib-name { flex:1 1 120px; min-width:100px; width:auto; }
-#fish-dialogue .fa-lib-guide { display:block; opacity:.72; padding-left:24px; }
-#fish-dialogue .fa-lib-guide-input { width:100%; box-sizing:border-box; font-size:12px; margin-top:2px; }
-
-/* Per-language voice slots */
-#fish-dialogue .fa-lang-select { display:flex; align-items:center; gap:6px; margin:4px 0; }
-#fish-dialogue .fa-lang-select span { flex:0 0 3em; opacity:.75; }
-#fish-dialogue .fa-lang-select select { flex:1; min-width:0; width:auto; }
-#fish-dialogue .fa-voice select { flex:1; min-width:80px; width:auto; }
 
 /* ---- 1.5.0 设置面板重组：状态条 / 分区 / 徽标 / 提示 ---- */
-#fish-dialogue .fa-statusbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:2px 0 10px; padding:6px; position:sticky; top:0; z-index:3; background:var(--SmartThemeBlurTintColor,rgba(0,0,0,.35)); backdrop-filter:blur(6px); border:1px solid #ffffff14; border-radius:10px; }
-#fish-dialogue .fa-chip { font-size:11px; line-height:1.5; padding:2px 9px; border-radius:999px; background:#ffffff12; border:1px solid #ffffff22; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
-#fish-dialogue .fa-chip-ver { opacity:.75; }
-#fish-dialogue .fa-sec > summary { display:flex; align-items:center; gap:8px; font-weight:600; padding:4px 2px; }
-#fish-dialogue .fa-sec > summary > i { width:1em; text-align:center; opacity:.85; }
-#fish-dialogue .fa-sec > summary > span:first-of-type { flex:1; }
-#fish-dialogue .fa-badge { font-size:11px; font-weight:500; opacity:.85; padding:1px 8px; border-radius:999px; background:#68cab622; border:1px solid #68cab644; }
-#fish-dialogue .fa-sub { margin:8px 0; padding:8px 10px; border:1px solid #ffffff14; border-radius:10px; background:#ffffff07; }
-#fish-dialogue .fa-subhead { font-size:12px; font-weight:600; opacity:.72; margin-bottom:6px; letter-spacing:.02em; }
-#fish-dialogue .fa-hint { display:block; opacity:.6; font-size:12px; line-height:1.5; margin:2px 0 8px; }
-#fish-dialogue .fa-row { gap:8px; }
-#fish-dialogue .fa-btn-danger { color:#ff8a8a !important; border-color:#ff8a8a66 !important; }
-#fish-dialogue .fa-empty { opacity:.65; font-size:12px; padding:10px; border:1px dashed #ffffff2a; border-radius:8px; text-align:center; }
 
 /* ---- 1.6.0 音色管理弹窗（墨与和纸） ----------------------------------
    The host theme drives the tint through --SmartTheme* variables, which here is a
    warm cream, and it repaints every .menu_button as a bare blue link. So the dialog
    paints its own palette and its own controls: ink on washi, one vermilion accent,
    monospace numerals, and no borrowed button styling. Everything is scoped to
-   #fa-voice-dialog so the settings drawer keeps the host look. */
+   #fa-voice-dialog, including the settings form that used to live in the drawer. */
 #fa-voice-dialog {
     --fa-ink: var(--SmartThemeBodyColor, #323232);
     --fa-ink-soft: color-mix(in srgb, var(--fa-ink) 68%, transparent);
@@ -401,3 +350,31 @@
 #fa-quick-dock .fa-dock-toggle:checked + .fa-dock-track::after { transform: translateX(13px); background: #b0442c; }
 
 @media (max-width: 720px) { #fa-quick-dock { right: 10px; bottom: 84px; padding: 5px 7px; gap: 6px; } }
+
+/* ---- 1.6.2 设置标签页（原扩展设置抽屉） ---------------------------------
+   The settings form is re-parented into #fa-voice-dialog, so the rules that used
+   to dress #fish-dialogue now hang off the tab. Colours stay on the theme so the
+   form keeps reading as the host's own controls, only tightened into the booklet. */
+#fa-voice-dialog .fa-settings { display: flex; flex-direction: column; gap: 12px; }
+#fa-voice-dialog .fa-settings .fa-sec { border: 1px solid var(--fa-line); border-radius: 4px; background: var(--fa-sheet); padding: 0 12px 12px; }
+#fa-voice-dialog .fa-settings .fa-sec > summary { display: flex; align-items: center; gap: 8px; padding: 10px 0; cursor: pointer; font-family: var(--fa-serif); font-size: 15px; font-weight: 600; color: var(--fa-ink); list-style: none; }
+#fa-voice-dialog .fa-settings .fa-sec > summary::-webkit-details-marker { display: none; }
+#fa-voice-dialog .fa-settings .fa-sec > summary i { color: var(--fa-accent); font-size: 12px; width: 14px; text-align: center; }
+#fa-voice-dialog .fa-settings .fa-sec > summary .fa-badge { margin-left: auto; font-family: var(--fa-mono); font-size: 11px; color: var(--fa-ink-soft); }
+#fa-voice-dialog .fa-settings .fa-sub { border-top: 1px solid var(--fa-line); padding-top: 10px; margin-top: 4px; }
+#fa-voice-dialog .fa-settings .fa-subhead { font-family: var(--fa-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--fa-ink-soft); margin-bottom: 8px; }
+#fa-voice-dialog .fa-settings label { display: block; margin: 8px 0; font-size: 13px; color: var(--fa-ink); }
+#fa-voice-dialog .fa-settings label.checkbox_label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+#fa-voice-dialog .fa-settings small.fa-hint { display: block; margin: 4px 0 8px; font-size: 11.5px; line-height: 1.5; color: var(--fa-ink-soft); }
+#fa-voice-dialog .fa-settings .fa-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+#fa-voice-dialog .fa-settings .fa-lang-select { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+#fa-voice-dialog .fa-settings .fa-lang-select > span { font-family: var(--fa-mono); font-size: 11px; color: var(--fa-ink-soft); min-width: 42px; }
+#fa-voice-dialog .fa-settings .fa-lang-select > select { flex: 1 1 auto; }
+#fa-voice-dialog .fa-settings .fa-voice { display: grid; grid-template-columns: minmax(96px, 1fr) repeat(4, minmax(72px, .9fr)) auto; gap: 6px; margin: 6px 0; }
+#fa-voice-dialog .fa-settings .fa-voice input { min-width: 0; }
+#fa-voice-dialog .fa-settings .fa-library-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--fa-line); font-size: 12px; }
+#fa-voice-dialog .fa-settings .fa-library-item > span { flex: 1 1 auto; color: var(--fa-ink-soft); }
+#fa-voice-dialog .fa-settings .fa-library-item > small { font-family: var(--fa-mono); font-size: 10.5px; color: var(--fa-ink-faint); }
+#fa-voice-dialog .fa-settings #fa-logs { max-height: 200px; overflow: auto; font-family: var(--fa-mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; background: var(--fa-raised); border-radius: 3px; padding: 8px; margin: 0; }
+#fa-voice-dialog .fa-settings progress { width: 100%; height: 6px; }
+#fa-voice-dialog .fa-settings .fa-statusbar { position: sticky; top: 0; z-index: 2; background: var(--fa-paper); padding: 6px 0; }
