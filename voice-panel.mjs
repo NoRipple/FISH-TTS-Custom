@@ -1,11 +1,22 @@
 // The voice management dialog. It is a presentation layer only: every rule about
 // groups, bulk activation, search and reference audio lives in voice-groups.mjs,
 // ref-audio.mjs and voice-library.mjs so the same code can be tested in node.
+//
+// Design note. The host lets a theme restyle every `.menu_button` (this instance
+// paints them as bare blue links) and the dialog inherits the theme tint, which is
+// a warm cream here. So the dialog defines its own ink-on-washi palette and never
+// dresses controls in `menu_button`: it reads as a printed voice booklet instead of
+// a stack of link rows. All colours are scoped to #fa-voice-dialog in style.css.
 import { collectGroupNames, groupEntries, addGroup, renameGroup, deleteGroup, assignGroup, toggleAll, removeEntries, setActive } from './voice-groups.mjs';
 import { formatBytes } from './ref-audio.mjs';
 import { searchVoices } from './voice-library.mjs';
 
 const UNGROUPED = '未分组';
+const TABS = [
+    ['library', '音色库', '按作品分组的全部音色'],
+    ['search', '搜索音色', '从 Fish 公开库添加'],
+    ['clone', '快速克隆', '上传音频做一次性克隆'],
+];
 
 export function installVoicePanel(deps) {
     const {
@@ -13,9 +24,12 @@ export function installVoicePanel(deps) {
         preview, search, addClone, removeRef, clearRefs, refUsage,
     } = deps;
     let dialog = null, tab = 'library', selection = new Set(), results = [], lastQuery = '';
+    let filter = '';
     // Collapsed groups survive a re-render, so ticking a voice does not spring a
     // group the user folded away back open.
     const collapsed = new Set();
+    // The confirm/ask overlays live in the top layer next to the dialog.
+    let askDialog = null, confirmDialog = null;
 
     function groups() { return collectGroupNames(library(), Array.isArray(settings.voiceGroups) ? settings.voiceGroups : []); }
     function persistGroups(next) { settings.voiceGroups = next; save(); }
@@ -31,33 +45,89 @@ export function installVoicePanel(deps) {
         node.append(...children.filter(Boolean));
         return node;
     }
+    // The host treats a bare <button> in the settings drawer as a .menu_button, so
+    // the dialog's own buttons are created already labelled with the -menu_button
+    // class the stylesheet refuses to style.
     function button(label, onClick, extra = '') {
-        return el('button', { class: 'menu_button ' + extra, type: 'button', text: label, onclick: onClick });
+        return el('button', { class: 'fa-menu_button ' + extra, type: 'button', text: label, onclick: onClick });
+    }
+    function quiet(label, onClick, extra = '') {
+        return el('button', { class: 'fa-menu_button fa-quiet ' + extra, type: 'button', text: label, onclick: onClick });
     }
     function hint(text) { return el('small', { class: 'fa-hint', text }); }
+    function icon(name) { return el('i', { class: 'fa-solid ' + name, 'aria-hidden': 'true' }); }
+
+    // A themed replacement for prompt(), which would paint the browser's own grey
+    // box over a carefully styled dialog.
+    function ask(title, defaultValue, multiline = false) {
+        return new Promise(resolve => {
+            askDialog?.remove();
+            const input = multiline
+                ? el('textarea', { class: 'fa-input', rows: '3' })
+                : el('input', { class: 'fa-input', type: 'text' });
+            input.value = defaultValue || '';
+            const head = el('div', { class: 'fa-subdialog-head' }, el('h4', { text: title }), quiet('取消', () => askDialog.close()));
+            let settled = false;
+            askDialog = el('dialog', { class: 'fa-subdialog', id: 'fa-subdialog-ask' },
+                el('form', { method: 'dialog', class: 'fa-subdialog-body' },
+                    head, input,
+                    el('div', { class: 'fa-actions fa-actions-end' },
+                        button('确定', () => { settled = true; resolve(input.value); askDialog.close(); }))));
+            askDialog.addEventListener('close', () => { if (!settled) resolve(null); askDialog.remove(); });
+            document.body.append(askDialog);
+            askDialog.showModal();
+            input.focus();
+            input.select?.();
+        });
+    }
+    function confirmAction(title, detail) {
+        return new Promise(resolve => {
+            confirmDialog?.remove();
+            const head = el('div', { class: 'fa-subdialog-head' }, el('h4', { text: title }), quiet('取消', () => confirmDialog.close()));
+            let settled = false;
+            confirmDialog = el('dialog', { class: 'fa-subdialog', id: 'fa-subdialog-confirm' },
+                el('form', { method: 'dialog', class: 'fa-subdialog-body' },
+                    head, el('p', { class: 'fa-subdialog-text', text: detail }),
+                    el('div', { class: 'fa-actions fa-actions-end' },
+                        button('确定', () => { settled = true; resolve(true); confirmDialog.close(); }, 'fa-danger'))));
+            confirmDialog.addEventListener('close', () => { if (!settled) resolve(false); confirmDialog.remove(); });
+            document.body.append(confirmDialog);
+            confirmDialog.showModal();
+        });
+    }
 
     function ensureDialog() {
         if (dialog) return dialog;
         dialog = el('dialog', { class: 'fa-voice-dialog', id: 'fa-voice-dialog' });
-        const header = el('div', { class: 'fa-voice-dialog-head' },
-            el('h3', { text: '音色管理' }),
-            button('关闭', () => dialog.close()));
-        const tabs = el('div', { class: 'fa-voice-tabs' });
-        for (const [key, label] of [['library', '音色库'], ['search', '搜索音色'], ['clone', '快速克隆']]) {
-            const node = el('button', { class: 'menu_button', type: 'button', text: label, 'data-tab': key, onclick: () => { tab = key; render(); } });
+        const title = el('div', { class: 'fa-head-titles' },
+            el('span', { class: 'fa-head-kicker', text: 'FISH TTS' }),
+            el('h3', { class: 'fa-head-title', text: '音色管理' }));
+        const head = el('div', { class: 'fa-voice-dialog-head' }, title,
+            el('button', { class: 'fa-menu_button fa-head-close', type: 'button', title: '关闭（Esc）', text: '×', onclick: () => dialog.close() }));
+        const tabs = el('div', { class: 'fa-voice-tabs', role: 'tablist' });
+        for (const [key, label, blurb] of TABS) {
+            const node = el('button', { class: 'fa-menu_button fa-tab', type: 'button', 'data-tab': key, title: blurb,
+                onclick: () => { tab = key; render(); } },
+                el('span', { class: 'fa-tab-label', text: label }),
+                el('span', { class: 'fa-tab-blurb', text: blurb }));
             tabs.append(node);
         }
-        dialog.append(header, tabs, el('div', { class: 'fa-voice-body' }));
+        dialog.append(head, tabs, el('div', { class: 'fa-voice-body' }), el('div', { class: 'fa-voice-foot' },
+            el('span', { class: 'fa-foot-hint', text: 'Esc 关闭 · 点组名折叠 · 改动即时保存' })));
         document.body.append(dialog);
         return dialog;
     }
 
     function body() { return dialog.querySelector('.fa-voice-body'); }
+    function footer() { return dialog.querySelector('.fa-voice-foot'); }
 
     function render() {
         if (!dialog) return;
-        for (const node of dialog.querySelectorAll('.fa-voice-tabs button')) node.classList.toggle('fa-tab-active', node.dataset.tab === tab);
+        for (const node of dialog.querySelectorAll('.fa-voice-tabs .fa-tab')) node.classList.toggle('fa-tab-active', node.dataset.tab === tab);
         const host = body(); host.replaceChildren();
+        footer().querySelector('.fa-foot-hint').textContent = tab === 'library'
+            ? `${library().length} 个音色 · 点组名折叠 · 改动即时保存`
+            : tab === 'search' ? '搜索走 Fish 公开库 · 添加只进本地库' : '一次性克隆 · 音频存在本浏览器 IndexedDB';
         if (tab === 'library') renderLibrary(host);
         else if (tab === 'search') renderSearch(host);
         else renderClone(host);
@@ -66,194 +136,221 @@ export function installVoicePanel(deps) {
     function renderLibrary(host) {
         const list = library();
         const names = collectGroupNames(list, settings.voiceGroups || []);
-        const { buckets, loose } = groupEntries(list, names);
-        host.append(hint('勾选后可批量移动到某个组或批量启用/禁用。点组名可以折叠/展开。删除组只把成员移到未分组，不会删除音色。'));
-        const bulk = el('div', { class: 'fa-row fa-bulk' },
-            button('全选本页', () => { selection = new Set(list.filter(Boolean).map(e => e.id)); render(); }),
-            button('清空勾选', () => { selection = new Set(); render(); }),
-            el('select', { class: 'text_pole', id: 'fa-bulk-target' },
-                ...[...names, ''].map(name => el('option', { value: name, text: name || UNGROUPED }))),
-            button('移动到所选组', () => {
-                const target = dialog.querySelector('#fa-bulk-target').value;
-                if (!selection.size) { log('WARN', '请先勾选音色'); return; }
-                const changed = assignGroup(list, [...selection], target);
-                setLibrary(list); log('INFO', `已移动 ${changed} 条音色到「${target || UNGROUPED}」`); refresh(); render();
-            }),
-            button('批量启用', () => { setActive(list, [...selection], true); setLibrary(list); refresh(); render(); }),
-            button('批量禁用', () => { setActive(list, [...selection], false); setLibrary(list); refresh(); render(); }));
-        host.append(bulk);
+        const total = list.filter(Boolean).length;
+        const activeCount = list.filter(e => e && e.active !== false).length;
+        const shown = selection.size;
 
-        for (const bucket of buckets) {
-            const section = el('div', { class: 'fa-group' });
-            const ids = bucket.entries.map(e => e.id);
-            const folded = collapsed.has(bucket.name);
-            if (folded) section.classList.add('fa-group-folded');
-            const toggle = el('button', { class: 'fa-group-toggle', type: 'button', title: folded ? '展开这个组' : '折叠这个组', text: folded ? '▶' : '▼' });
-            toggle.addEventListener('click', () => {
-                if (collapsed.has(bucket.name)) collapsed.delete(bucket.name); else collapsed.add(bucket.name);
-                render();
+        // Toolbar: a search field, a selection readout and the bulk actions that
+        // only make sense once something is ticked.
+        const searchBox = el('input', { class: 'fa-input fa-vsearch', type: 'search', placeholder: '按名字筛选…', 'aria-label': '按名字筛选音色' });
+        searchBox.value = filter;
+        searchBox.addEventListener('input', () => { filter = searchBox.value.trim(); render(); });
+        // Re-rendering on every keystroke would drop the caret, so the caret is put
+        // back where it was once the new toolbar is in the document.
+        if (filter) {
+            queueMicrotask(() => {
+                const box = dialog.querySelector('.fa-vsearch');
+                if (!box) return;
+                box.focus();
+                box.setSelectionRange(box.value.length, box.value.length);
             });
-            const head = el('div', { class: 'fa-group-head' },
-                toggle,
-                el('b', { class: 'fa-group-name', text: bucket.name, title: '点击折叠/展开', onclick: () => { toggle.click(); } }),
-                el('small', { class: 'fa-group-count', text: `${bucket.entries.filter(e => e.active !== false).length}/${bucket.entries.length}` }),
-                button('全选', () => { for (const id of ids) selection.add(id); render(); }),
-                button('全部启用', () => { toggleAll(list, ids, 'enable'); setLibrary(list); refresh(); render(); }),
-                button('全部禁用', () => { toggleAll(list, ids, 'disable'); setLibrary(list); refresh(); render(); }),
-                button('改名', () => {
-                    const next = prompt('新的组名', bucket.name);
-                    if (next == null) return;
-                    try {
-                        const result = renameGroup(list, settings.voiceGroups || [], bucket.name, next);
-                        persistGroups(result.groups); setLibrary(list); refresh(); render();
-                    } catch (e) { log('ERROR', e.message); }
-                }),
-                button('删除组', () => {
-                    if (!confirm(`删除「${bucket.name}」？组内 ${bucket.entries.length} 个音色会移到未分组，不会被删除。`)) return;
-                    const result = deleteGroup(list, settings.voiceGroups || [], bucket.name);
-                    persistGroups(result.groups); setLibrary(list); refresh(); render();
-                    log('INFO', `已删除组「${bucket.name}」，${result.moved} 条音色移至未分组`);
-                }, 'fa-btn-danger'));
-            section.append(head);
-            if (folded) { host.append(section); continue; }
-            if (!bucket.entries.length) section.append(el('div', { class: 'fa-empty', text: '这个组还没有音色。可以从“搜索音色”添加，或勾选已有音色后移动过来。' }));
-            for (const entry of bucket.entries) section.append(entryRow(entry, list));
-            host.append(section);
+        }
+        const meta = el('div', { class: 'fa-toolbar-meta' },
+            el('span', { class: 'fa-stat', text: `共 ${total} 个音色` }),
+            el('span', { class: 'fa-stat', text: `已激活 ${activeCount}` }),
+            shown ? el('span', { class: 'fa-stat fa-stat-on', text: `已勾选 ${shown}` }) : null);
+        host.append(el('div', { class: 'fa-toolbar' }, searchBox, meta));
+
+        if (shown) {
+            const target = el('select', { class: 'fa-input fa-select', id: 'fa-bulk-target' },
+                ...[...names, ''].map(name => el('option', { value: name, text: name || UNGROUPED })));
+            host.append(el('div', { class: 'fa-bulk' },
+                el('div', { class: 'fa-bulk-head' }, icon('fa-check-double'), el('span', { text: `已勾选 ${shown} 个` }),
+                    quiet('清空勾选', () => { selection = new Set(); render(); })),
+                el('div', { class: 'fa-bulk-row' },
+                    el('label', { class: 'fa-bulk-label' }, el('span', { text: '移动到' }), target),
+                    button('移动', () => {
+                        const chosen = dialog.querySelector('#fa-bulk-target').value;
+                        const changed = assignGroup(list, [...selection], chosen);
+                        setLibrary(list); log('INFO', `已移动 ${changed} 条音色到「${chosen || UNGROUPED}」`); refresh(); render();
+                    }, 'fa-primary'),
+                    quiet('批量启用', () => { setActive(list, [...selection], true); setLibrary(list); refresh(); render(); }),
+                    quiet('批量禁用', () => { setActive(list, [...selection], false); setLibrary(list); refresh(); render(); }))));
         }
 
-        const looseFolded = collapsed.has(UNGROUPED);
-        const looseSection = el('div', { class: 'fa-group' + (looseFolded ? ' fa-group-folded' : '') });
-        const looseToggle = el('button', { class: 'fa-group-toggle', type: 'button', title: looseFolded ? '展开这个组' : '折叠这个组', text: looseFolded ? '▶' : '▼' });
-        looseToggle.addEventListener('click', () => {
-            if (collapsed.has(UNGROUPED)) collapsed.delete(UNGROUPED); else collapsed.add(UNGROUPED);
+        const needle = filter.toLowerCase();
+        const match = entry => !needle || (entry.name || '').toLowerCase().includes(needle) || (entry.id || '').toLowerCase().includes(needle);
+        const { buckets, loose } = groupEntries(list, names);
+        for (const bucket of buckets) {
+            const entries = bucket.entries.filter(match);
+            if (needle && !entries.length) continue;
+            host.append(groupSection(bucket.name, entries, list));
+        }
+        host.append(groupSection(UNGROUPED, loose.filter(match), list, { loose: true }));
+        if (needle && !list.some(match)) host.append(el('div', { class: 'fa-empty', text: `没有名字包含「${filter}」的音色。` }));
+        if (!total) host.append(el('div', { class: 'fa-empty', text: '音色库是空的：可以点“导入内置音色（28）”或“从 Fish 同步”，也可以在“搜索音色”里找。' }));
+
+        const nameInput = el('input', { class: 'fa-input', id: 'fa-group-name', placeholder: '新组名称，例如 鸣潮' });
+        nameInput.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addGroupRow(); } });
+        function addGroupRow() {
+            try {
+                persistGroups(addGroup(settings.voiceGroups || [], nameInput.value));
+                nameInput.value = ''; render();
+            } catch (e) { log('ERROR', e.message); }
+        }
+        host.append(el('div', { class: 'fa-newgroup' }, icon('fa-folder-plus'), nameInput, button('新建组', addGroupRow)));
+    }
+
+    function groupSection(name, entries, list, options = {}) {
+        const folded = collapsed.has(name);
+        const section = el('section', { class: 'fa-group' + (folded ? ' fa-group-folded' : '') });
+        const activeInside = entries.filter(e => e.active !== false).length;
+        const toggle = el('button', { class: 'fa-menu_button fa-group-toggle', type: 'button', title: folded ? '展开' : '折叠', 'aria-expanded': String(!folded) },
+            icon('fa-chevron-down'));
+        toggle.addEventListener('click', () => {
+            if (collapsed.has(name)) collapsed.delete(name); else collapsed.add(name);
             render();
         });
-        looseSection.append(el('div', { class: 'fa-group-head' }, looseToggle,
-            el('b', { class: 'fa-group-name', text: UNGROUPED, title: '点击折叠/展开', onclick: () => { looseToggle.click(); } }),
-            el('small', { class: 'fa-group-count', text: String(loose.length) })));
-        if (!looseFolded) {
-            for (const entry of loose) looseSection.append(entryRow(entry, list));
-            if (!loose.length) looseSection.append(el('div', { class: 'fa-empty', text: '没有未分组的音色。' }));
-        }
-        host.append(looseSection);
-
-        const adder = el('div', { class: 'fa-row' },
-            el('input', { class: 'text_pole', id: 'fa-group-name', placeholder: '新组名称' }),
-            button('新建组', () => {
-                const input = dialog.querySelector('#fa-group-name');
+        const ids = entries.map(e => e.id);
+        const actions = el('div', { class: 'fa-group-actions' },
+            quiet('全选', () => { for (const id of entries.map(e => e.id)) selection.add(id); render(); }),
+            options.loose ? null : quiet('全部启用', () => { toggleAll(list, ids, 'enable'); setLibrary(list); refresh(); render(); }),
+            options.loose ? null : quiet('全部禁用', () => { toggleAll(list, ids, 'disable'); setLibrary(list); refresh(); render(); }),
+            options.loose ? null : quiet('改名', async () => {
+                const next = await ask('新的组名', name);
+                if (next == null) return;
                 try {
-                    persistGroups(addGroup(settings.voiceGroups || [], input.value));
-                    input.value = ''; render();
+                    const result = renameGroup(list, settings.voiceGroups || [], name, next);
+                    collapsed.delete(name);
+                    persistGroups(result.groups); setLibrary(list); refresh(); render();
                 } catch (e) { log('ERROR', e.message); }
-            }));
-        host.append(adder);
-
-        if (!list.length) host.append(el('div', { class: 'fa-empty', text: '音色库是空的：可以点“导入内置音色（28）”或“从 Fish 同步”，也可以在“搜索音色”里找。' }));
+            }),
+            options.loose ? null : quiet('删除组', async () => {
+                if (!await confirmAction(`删除「${name}」？`, `组内 ${entries.length} 个音色会移到未分组，不会被删除。`)) return;
+                const result = deleteGroup(list, settings.voiceGroups || [], name);
+                persistGroups(result.groups); setLibrary(list); refresh(); render();
+                log('INFO', `已删除组「${name}」，${result.moved} 条音色移至未分组`);
+            }, 'fa-danger'));
+        const head = el('div', { class: 'fa-group-head' },
+            toggle,
+            el('div', { class: 'fa-group-name', title: '点击折叠/展开', onclick: () => toggle.click() },
+                el('span', { class: 'fa-group-title', text: name }),
+                el('span', { class: 'fa-group-count', text: `${activeInside}/${entries.length}` })),
+            actions);
+        section.append(head);
+        if (folded) return section;
+        if (!entries.length) section.append(el('div', { class: 'fa-empty', text: options.loose ? '没有未分组的音色。' : '这个组还没有音色。可以从“搜索音色”添加，或勾选已有音色后移动过来。' }));
+        for (const entry of entries) section.append(entryRow(entry, list));
+        return section;
     }
 
     function entryRow(entry, list) {
-        const row = el('div', { class: 'fa-lib-item' + (entry.active === false ? ' fa-inactive' : '') });
-        const head = el('div', { class: 'fa-lib-head' });
-        const check = el('input', { type: 'checkbox' });
+        const row = el('div', { class: 'fa-voice-row' + (entry.active === false ? ' fa-row-off' : '') });
+        const check = el('input', { type: 'checkbox', class: 'fa-tick', 'aria-label': '勾选' });
         check.checked = selection.has(entry.id);
-        check.addEventListener('change', () => { if (check.checked) selection.add(entry.id); else selection.delete(entry.id); });
-        const active = el('input', { type: 'checkbox', title: '激活后才会同步到世界书名册并参与自动匹配' });
+        check.addEventListener('change', () => { if (check.checked) selection.add(entry.id); else selection.delete(entry.id); render(); });
+        const active = el('input', { type: 'checkbox', class: 'fa-switch-input', title: '激活后才会同步到世界书名册并参与自动匹配', 'aria-label': '激活' });
         active.checked = entry.active !== false;
-        active.addEventListener('change', () => { setActive(list, [entry.id], active.checked); setLibrary(list); refresh(); });
-        const name = el('input', { class: 'text_pole fa-lib-name' });
+        active.addEventListener('change', () => { setActive(list, [entry.id], active.checked); setLibrary(list); refresh(); render(); });
+        const name = el('input', { class: 'fa-input fa-name', 'aria-label': '音色名称' });
         name.value = entry.name || entry.id;
         name.addEventListener('change', () => {
             const value = name.value.trim();
             if (value) { entry.name = value; setLibrary(list); refresh(); } else name.value = entry.name || entry.id;
         });
-        const meta = el('small', {
-            text: (entry.languages?.length ? entry.languages.join('/') : '通用')
-                + (entry.refAudio ? ' · 一次性克隆 ' + formatBytes(entry.refAudio.bytes) : '')
-                + (entry.active === false ? ' · 未激活' : ''),
-        });
-        head.append(check, active, name, meta);
-        head.append(button('试听', () => { try { preview(entry); } catch (e) { log('ERROR', e.message); } }));
-        if (entry.refAudio) {
-            head.append(button('重填逐字稿', () => {
-                const next = prompt('逐字稿（必须与参考音频里说的一字不差，含标点）', entry.refAudio.transcript || '');
+        const tags = el('div', { class: 'fa-vtags' },
+            ...(entry.languages?.length ? entry.languages : ['通用']).map(lang => el('span', { class: 'fa-vtag', text: lang })),
+            entry.refAudio ? el('span', { class: 'fa-vtag fa-vtag-clone', text: '克隆 ' + formatBytes(entry.refAudio.bytes) }) : null,
+            entry.active === false ? el('span', { class: 'fa-vtag fa-vtag-off', text: '未激活' }) : null);
+        const tools = el('div', { class: 'fa-row-tools' },
+            quiet('试听', () => { try { preview(entry); } catch (e) { log('ERROR', e.message); } }),
+            entry.refAudio ? quiet('逐字稿', async () => {
+                const next = await ask('逐字稿（必须与音频里说的一字不差，含标点）', entry.refAudio.transcript || '', true);
                 if (next == null) return;
                 if (!next.trim()) { log('ERROR', '逐字稿不能为空'); return; }
                 entry.refAudio.transcript = next.trim(); setLibrary(list); refresh(); log('INFO', '逐字稿已更新');
-            }));
-        }
-        head.append(button('删除', () => {
-            if (!confirm(`从音色库移除「${entry.name || entry.id}」？`)) return;
-            const next = removeEntries(list, [entry.id]);
-            setLibrary(next);
-            if (entry.refAudio) removeRef(entry.id).catch(e => log('ERROR', e.message));
-            refresh(); render();
-        }, 'fa-btn-danger'));
-        row.append(head);
+            }) : null,
+            quiet('删除', async () => {
+                if (!await confirmAction(`从音色库移除「${entry.name || entry.id}」？`, '只会从本地音色库移除，不会影响 Fish 账号。')) return;
+                const next = removeEntries(list, [entry.id]);
+                setLibrary(next);
+                if (entry.refAudio) removeRef(entry.id).catch(e => log('ERROR', e.message));
+                selection.delete(entry.id);
+                refresh(); render();
+            }, 'fa-danger'));
+        row.append(el('label', { class: 'fa-pick' }, check), el('label', { class: 'fa-switch' }, active, el('span', { class: 'fa-switch-track' })), name, tags, tools);
         return row;
     }
 
     function renderSearch(host) {
-        host.append(hint('搜索 Fish 公开音色库（不传 self，即全站公开音色），按使用量排序。添加后只进入你的本地库，不会写入 Fish 账号。'));
-        const input = el('input', { class: 'text_pole', id: 'fa-search-title', placeholder: '关键词，例如 星穹铁道 / 少女' });
+        host.append(el('div', { class: 'fa-lead' },
+            el('div', { class: 'fa-lead-title', text: '从 Fish 公开库取音' }),
+            hint('搜的是全站公开音色，按相关度排序；添加后只进本地库，不会写进 Fish 账号。')));
+        const input = el('input', { class: 'fa-input fa-vsearch', id: 'fa-search-title', type: 'search', placeholder: '关键词，例如 星穹铁道 / 少女' });
         input.value = lastQuery;
+        const status = el('div', { class: 'fa-search-status' });
         const doSearch = async () => {
             lastQuery = input.value.trim();
             if (!lastQuery) { log('WARN', '请输入搜索关键词'); return; }
-            const status = dialog.querySelector('#fa-search-status');
+            input.value = lastQuery;
             status.textContent = '搜索中…';
+            status.classList.add('fa-busy');
             try {
                 const data = await search({ title: lastQuery });
                 results = data.entries;
+                status.classList.remove('fa-busy');
                 status.textContent = `共 ${data.total} 个结果，显示前 ${results.length} 个`;
                 renderResults();
-            } catch (e) { status.textContent = ''; log('ERROR', e.message); }
+            } catch (e) { status.classList.remove('fa-busy'); status.textContent = ''; log('ERROR', e.message); }
         };
         input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); doSearch(); } });
-        host.append(el('div', { class: 'fa-row' }, input, button('搜索', doSearch)));
-        host.append(el('small', { class: 'fa-hint', id: 'fa-search-status', text: results.length ? `上次结果 ${results.length} 个` : '' }));
-        const listHost = el('div', { id: 'fa-search-results' }); host.append(listHost);
+        host.append(el('div', { class: 'fa-vsearchbar' }, input, button('搜索', doSearch, 'fa-primary')));
+        host.append(status);
+        const listHost = el('div', { class: 'fa-search-results' }); host.append(listHost);
         function renderResults() {
             listHost.replaceChildren();
             if (!results.length) { listHost.append(el('div', { class: 'fa-empty', text: '没有结果，换个关键词试试。' })); return; }
             for (const item of results) {
-                const row = el('div', { class: 'fa-lib-item' });
-                const head = el('div', { class: 'fa-lib-head' },
+                const head = el('div', { class: 'fa-search-head' },
                     el('span', { class: 'fa-search-name', text: item.name }),
-                    el('small', { text: (item.languages?.length ? item.languages.join('/') : '未标注语言') + (item.taskCount ? ' · 使用 ' + item.taskCount : '') }));
-                head.append(button('试听', () => { try { preview({ id: item.id, name: item.name, languages: item.languages }); } catch (e) { log('ERROR', e.message); } }));
-                head.append(button('添加', () => {
-                    const names = groups();
-                    const answer = prompt('添加到哪个组？（留空 = 未分组）\n可选：' + [...names].join(' / '), names[0] || '');
-                    if (answer == null) return;
-                    const target = answer.trim();
-                    if (target && !names.includes(target)) {
-                        try { persistGroups(addGroup(settings.voiceGroups || [], target)); } catch (e) { log('ERROR', e.message); return; }
-                    }
-                    const list = library();
-                    const existing = list.find(entry => entry.id === item.id);
-                    if (existing) existing.group = target;
-                    else list.push({ ...item, group: target });
-                    setLibrary(list); refresh(); log('INFO', `已添加音色「${item.name}」到「${target || UNGROUPED}」`);
-                    render();
-                }));
-                row.append(head);
-                listHost.append(row);
+                    el('span', { class: 'fa-vtags' },
+                        ...(item.languages?.length ? item.languages : ['未标注']).map(lang => el('span', { class: 'fa-vtag', text: lang })),
+                        item.taskCount ? el('span', { class: 'fa-vtag fa-vtag-count', text: '使用 ' + item.taskCount }) : null),
+                    el('div', { class: 'fa-row-tools' },
+                        quiet('试听', () => { try { preview({ id: item.id, name: item.name, languages: item.languages }); } catch (e) { log('ERROR', e.message); } }),
+                        button('添加', async () => {
+                            const names = groups();
+                            const answer = await ask(`把「${item.name}」放到哪个组？`, '', false);
+                            if (answer == null) return;
+                            const target = answer.trim();
+                            if (target && !names.includes(target)) {
+                                try { persistGroups(addGroup(settings.voiceGroups || [], target)); } catch (e) { log('ERROR', e.message); return; }
+                            }
+                            const list = library();
+                            const existing = list.find(entry => entry.id === item.id);
+                            if (existing) existing.group = target;
+                            else list.push({ ...item, group: target });
+                            setLibrary(list); refresh(); log('INFO', `已添加音色「${item.name}」到「${target || UNGROUPED}」`);
+                            render();
+                        }, 'fa-primary')));
+                listHost.append(el('div', { class: 'fa-search-row' }, head));
             }
         }
-        if (results.length) renderResults();
+        if (results.length) { status.textContent = `上次结果 ${results.length} 个`; renderResults(); }
     }
 
     function renderClone(host) {
-        host.append(hint('一次性克隆：上传一段 10–30 秒的参考音频并填写逐字稿。参照 Fish 的 one-shot 模式，服务器不保存任何东西，每次合成都会随请求重新上传这段音频。'));
-        // The native file input is kept for its file picker but hidden by CSS: on a
-        // dark theme an unstyled <input type=file> shows only the browser's default
-        // grey text, which reads as "there is no way to pick a file".
+        host.append(el('div', { class: 'fa-lead' },
+            el('div', { class: 'fa-lead-title', text: '用一段录音克隆音色' }),
+            hint('一次性克隆：10–30 秒参考音频 + 逐字稿。服务器不保存任何东西，每次合成都随请求重新上传这段音频。')));
+        // The native file input is kept for its picker but visually hidden: on a
+        // themed chat an unstyled <input type=file> is a grey bar nobody notices.
         const file = el('input', { type: 'file', accept: 'audio/*', id: 'fa-clone-file', class: 'fa-file-input' });
-        const name = el('input', { class: 'text_pole', id: 'fa-clone-name', placeholder: '名称（例如 丹恒）' });
-        const language = el('select', { class: 'text_pole', id: 'fa-clone-lang' },
+        const name = el('input', { class: 'fa-input', id: 'fa-clone-name', placeholder: '名称（例如 丹恒）' });
+        const language = el('select', { class: 'fa-input fa-select', id: 'fa-clone-lang' },
             el('option', { value: '', text: '通用' }), el('option', { value: 'zh', text: '中文' }),
             el('option', { value: 'ja', text: '日语' }), el('option', { value: 'en', text: '英语' }));
-        const transcript = el('textarea', { class: 'text_pole', id: 'fa-clone-transcript', rows: '3', placeholder: '逐字稿：参考音频里说的原话，必须一字不差（含标点）' });
+        const transcript = el('textarea', { class: 'fa-input fa-textarea', id: 'fa-clone-transcript', rows: '3', placeholder: '参考音频里说的原话，必须一字不差（含标点）' });
         const info = el('span', { class: 'fa-file-name', id: 'fa-clone-info', text: '尚未选择文件' });
         const pick = button('选择音频文件', () => file.click());
         file.addEventListener('change', () => {
@@ -261,36 +358,45 @@ export function installVoicePanel(deps) {
             info.textContent = picked ? `${picked.name} · ${formatBytes(picked.size)}` : '尚未选择文件';
             info.classList.toggle('fa-file-picked', Boolean(picked));
         });
-        host.append(el('div', { class: 'fa-field' },
-            el('label', { class: 'fa-field-label', text: '参考音频文件' }),
-            el('div', { class: 'fa-file-row' }, file, pick, info)));
-        host.append(el('div', { class: 'fa-field' },
-            el('label', { class: 'fa-field-label', text: '名称' }), name));
-        host.append(el('div', { class: 'fa-field' },
-            el('label', { class: 'fa-field-label', text: '语言' }), language));
-        host.append(el('div', { class: 'fa-field' },
-            el('label', { class: 'fa-field-label', text: '逐字稿（必填）' }), transcript));
-        host.append(hint('逐字稿必须和音频内容完全一致，包括标点。不一致会明显降低克隆音质——这是 Fish 的要求，不是本插件的限制。'));
-        host.append(el('div', { class: 'fa-row' },
-            button('保存到音色库', async () => {
-                const picked = file.files?.[0];
-                try { await addClone({ file: picked, name: name.value, language: language.value, transcript: transcript.value }); file.value = ''; transcript.value = ''; name.value = ''; info.textContent = '尚未选择文件'; info.classList.remove('fa-file-picked'); render(); }
-                catch (e) { log('ERROR', e.message); }
-            })));
-        const usageHost = el('div', { class: 'fa-row', id: 'fa-ref-usage' });
-        const cleanup = button('清理全部参考音频', async () => {
-            if (!confirm('删除所有已保存的参考音频？音色库条目会保留，但这些克隆音色将无法再合成，需要重新导入音频。')) return;
+        host.append(el('div', { class: 'fa-card' },
+            el('div', { class: 'fa-field' },
+                el('label', { class: 'fa-field-label', text: '参考音频文件' }),
+                el('div', { class: 'fa-file-row' }, icon('fa-waveform'), file, pick, info)),
+            el('div', { class: 'fa-field' }, el('label', { class: 'fa-field-label', text: '名称' }), name),
+            el('div', { class: 'fa-field' }, el('label', { class: 'fa-field-label', text: '语言' }), language),
+            el('div', { class: 'fa-field' },
+                el('label', { class: 'fa-field-label', text: '逐字稿（必填）' }), transcript,
+                hint('必须和音频内容完全一致，包括标点。不一致会明显降低克隆音质——这是 Fish 的要求，不是本插件的限制。')),
+            el('div', { class: 'fa-actions' },
+                button('保存到音色库', async () => {
+                    const picked = file.files?.[0];
+                    try {
+                        await addClone({ file: picked, name: name.value, language: language.value, transcript: transcript.value });
+                        file.value = ''; transcript.value = ''; name.value = '';
+                        info.textContent = '尚未选择文件'; info.classList.remove('fa-file-picked'); render();
+                    } catch (e) { log('ERROR', e.message); }
+                }, 'fa-primary'))));
+
+        const usageHost = el('div', { class: 'fa-usage' });
+        const cleanup = quiet('清理全部参考音频', async () => {
+            if (!await confirmAction('清理全部参考音频？', '音色库条目会保留，但这些克隆音色将无法再合成，需要重新导入音频。')) return;
             try { const removed = await clearRefs(); log('INFO', `已清理 ${removed} 段参考音频`); render(); }
             catch (e) { log('ERROR', e.message); }
-        }, 'fa-btn-danger');
-        host.append(el('div', { class: 'fa-sub' }, el('div', { class: 'fa-subhead', text: '存储与清理' }), usageHost, el('div', { class: 'fa-row' }, cleanup),
-            hint('参考音频保存在当前浏览器的 IndexedDB 中，扩展无法写入磁盘。清除网站数据会一并删除；换浏览器需要重新导入。')));
-        refUsage().then(usage => { usageHost.textContent = `已存 ${usage.count} 段，占用 ${formatBytes(usage.bytes)}`; }).catch(() => {});
+        }, 'fa-danger');
+        host.append(el('div', { class: 'fa-card fa-card-muted' },
+            el('div', { class: 'fa-card-head' }, icon('fa-vdatabase'), el('span', { class: 'fa-card-title', text: '存储与清理' })),
+            usageHost, el('div', { class: 'fa-actions' }, cleanup),
+            hint('参考音频存在当前浏览器的 IndexedDB 里，扩展无法写磁盘；清除站点数据会一并删除，换浏览器需要重新导入。')));
+        refUsage().then(usage => {
+            usageHost.replaceChildren(
+                el('div', { class: 'fa-usage-num', text: formatBytes(usage.bytes) }),
+                el('div', { class: 'fa-usage-label', text: `已存 ${usage.count} 段参考音频` }));
+        }).catch(() => {});
     }
 
     return {
         open(startTab = 'library') { tab = startTab; const node = ensureDialog(); render(); if (!node.open) node.showModal(); },
         close() { dialog?.close(); },
-        refresh() { if (dialog) render(); },
+        refresh() { if (dialog && dialog.open) render(); },
     };
 }

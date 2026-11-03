@@ -492,25 +492,27 @@ t('汇总统计激活数', () => {
 });
 
 console.log('\n— voice-library: 搜索与同步合并 —');
-t('搜索请求不带 self（否则会搜成自己的库）', () => {
+t('搜索走 /model/web 而不是 /model', () => {
     const url = voiceSearchRequest('https://api.fish.audio', { title: '星穹铁道' });
-    assert.equal(url.includes('self='), false);
-    assert.equal(url.includes('title=' + encodeURIComponent('星穹铁道')), true);
+    assert.equal(url.endsWith('/model/web?title=%E6%98%9F%E7%A9%B9%E9%93%81%E9%81%93&page_number=1&sort_by=score&experimental_rerank=false'), true);
 });
-t('搜索请求带分页与语言', () => {
-    const url = voiceSearchRequest('https://api.fish.audio/v1', { title: 'x', pageSize: 5, page: 2, language: 'ja' });
-    assert.equal(url.includes('page_size=5'), true);
+t('搜索请求不再经过酒馆的 /proxy/', () => {
+    // /proxy/ drops the Authorization header, which makes Fish answer with the
+    // anonymous hot list instead of real search hits.
+    const url = voiceSearchRequest('https://api.fish.audio', { title: '玛薇卡' });
+    assert.equal(url.startsWith('https://api.fish.audio/'), true);
+    assert.equal(url.includes('/proxy/'), false);
+});
+t('搜索请求带分页、语言与排序', () => {
+    const url = voiceSearchRequest('https://api.fish.audio/v1', { title: 'x', page: 2, language: 'ja' });
     assert.equal(url.includes('page_number=2'), true);
     assert.equal(url.includes('language=ja'), true);
+    assert.equal(url.includes('sort_by=score'), true);
     assert.equal(url.includes('/v1/model'), false);
-});
-t('page_size 被夹在 1–100', () => {
-    assert.equal(voiceSearchRequest('https://api.fish.audio', { pageSize: 999 }).includes('page_size=100'), true);
-    assert.equal(voiceSearchRequest('https://api.fish.audio', { pageSize: -3 }).includes('page_size=1'), true);
 });
 t('明文 http 的 Base URL 被拒绝', () => assert.throws(() => voiceSearchRequest('http://api.fish.audio'), /HTTPS/));
 t('非 HTTP 协议同样被拒绝', () => assert.throws(() => voiceSearchRequest('ftp://api.fish.audio'), /HTTPS/));
-t('空标题也能构造请求（拉全站第一页）', () => {
+t('空标题不塞 title 参数', () => {
     const url = voiceSearchRequest('https://api.fish.audio', { title: '   ' });
     assert.equal(url.includes('title='), false);
 });
@@ -521,11 +523,14 @@ t('搜索返回去重后的条目与总数', async () => {
     assert.equal(data.total, 42);
 });
 t('搜索无 Key 直接报错', async () => {
-    await assert.rejects(() => searchVoices({ baseUrl: 'https://api.fish.audio', apiKey: '' }), /API Key/);
+    await assert.rejects(() => searchVoices({ baseUrl: 'https://api.fish.audio', apiKey: '', title: 'x' }), /API Key/);
+});
+t('搜索空关键词直接报错', async () => {
+    await assert.rejects(() => searchVoices({ baseUrl: 'https://api.fish.audio', apiKey: 'k', title: '  ' }), /音色名称/);
 });
 t('搜索 HTTP 错误转成中文提示', async () => {
     const fetcher = async () => ({ ok: false, status: 500, json: async () => null });
-    await assert.rejects(() => searchVoices({ baseUrl: 'https://api.fish.audio', apiKey: 'k', fetcher }), /HTTP 500/);
+    await assert.rejects(() => searchVoices({ baseUrl: 'https://api.fish.audio', apiKey: 'k', title: 'x', fetcher }), /HTTP 500/);
 });
 t('同步保留分组、克隆标记与自定义名称', () => {
     const before = [{ id: 'v1', name: '我改的名字', group: 'HSR', active: false, refAudio: { transcript: 'hi', bytes: 10 }, guide: 'g' }];

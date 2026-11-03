@@ -123,34 +123,47 @@ export function voiceLibraryRequest(baseUrl, { pageSize = 50, page = 1 } = {}) {
     return '/proxy/' + target.href;
 }
 
-// Public search: same GET /model endpoint WITHOUT self=true, which is what makes
-// it the whole public catalogue instead of the account's own voices. Only page
-// one is fetched per query: results are sorted by usage, so deeper pages rarely
-// beat what the user can reach by refining the keyword.
-export function voiceSearchRequest(baseUrl, { title = '', pageSize = 20, page = 1, language = '', sortBy = '' } = {}) {
+// Public search: Fish's web client posts GET /model/web (NOT /model, which ignores
+// every filter and just pages the hot list). /model/web honours title/language/
+// sort_by and returns real relevance scores.
+//
+// The request goes out DIRECTLY, not through SillyTavern's /proxy/: the proxy only
+// forwards the URL and drops the Authorization header, so a proxied call would be
+// anonymous and would come back as the default hot list. Direct access needs
+// enableCorsProxy: true in SillyTavern's config.yaml so the response gets CORS headers.
+export function voiceSearchRequest(baseUrl, { title = '', page = 1, language = '', sortBy = 'score', searchId = '' } = {}) {
     const base = new URL(baseUrl || 'https://api.fish.audio');
     if (base.protocol !== 'https:') throw new Error('搜索需要 HTTPS 的 Base URL');
     if (base.username || base.password || base.search || base.hash) throw new Error('Base URL 不能包含账号或查询参数');
     base.pathname = base.pathname.replace(/\/+$/, '').replace(/\/v1$/, '') + '/';
-    const target = new URL('model', base);
+    const target = new URL('model/web', base);
     const query = String(title ?? '').trim();
     if (query) target.searchParams.set('title', query);
-    target.searchParams.set('page_size', String(Math.min(100, Math.max(1, Number(pageSize) || 20))));
     target.searchParams.set('page_number', String(Math.max(1, Number(page) || 1)));
+    target.searchParams.set('sort_by', String(sortBy || 'score'));
     if (language) target.searchParams.set('language', String(language));
-    if (sortBy) target.searchParams.set('sort_by', String(sortBy));
-    return '/proxy/' + target.href;
+    if (searchId) target.searchParams.set('search_id', String(searchId));
+    target.searchParams.set('experimental_rerank', 'false');
+    return target.href;
 }
 
-export async function searchVoices({ baseUrl, apiKey, title, pageSize = 20, page = 1, language = '', sortBy = '', signal, fetcher = fetch } = {}) {
+export async function searchVoices({ baseUrl, apiKey, title, page = 1, language = '', sortBy = 'score', signal, fetcher = fetch } = {}) {
     if (!apiKey?.trim() || /[\r\n]/.test(apiKey)) throw new Error('请先填写有效的 API Key，再搜索音色');
-    const response = await fetcher(voiceSearchRequest(baseUrl, { title, pageSize, page, language, sortBy }), {
-        method: 'GET',
-        headers: { Authorization: 'Bearer ' + apiKey.trim() },
-        redirect: 'error',
-        signal,
-    });
-    if (response.status === 404) throw new Error('HTTP 404：请启用 enableCorsProxy: true 并重启酒馆；自定义 Base URL 需支持 /model 接口');
+    const q = String(title ?? '').trim();
+    if (!q) throw new Error('请输入要搜索的音色名称');
+    const url = voiceSearchRequest(baseUrl, { title: q, page, language, sortBy, searchId: globalThis.crypto?.randomUUID?.() || '' });
+    let response;
+    try {
+        response = await fetcher(url, {
+            method: 'GET',
+            headers: { Authorization: 'Bearer ' + apiKey.trim(), Accept: 'application/json' },
+            redirect: 'error',
+            signal,
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        throw new Error('音色搜索连接失败：请在酒馆 config.yaml 里启用 enableCorsProxy: true 并重启酒馆（跨域请求被浏览器拦截）');
+    }
     if (!response.ok) throw new Error(`音色搜索失败：HTTP ${response.status}；请检查 API Key 和额度`);
     const data = await response.json().catch(() => null);
     const items = Array.isArray(data?.items) ? data.items : [];

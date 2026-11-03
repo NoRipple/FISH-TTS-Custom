@@ -76,65 +76,272 @@
 #fish-dialogue .fa-btn-danger { color:#ff8a8a !important; border-color:#ff8a8a66 !important; }
 #fish-dialogue .fa-empty { opacity:.65; font-size:12px; padding:10px; border:1px dashed #ffffff2a; border-radius:8px; text-align:center; }
 
-/* ---- 1.5.5 音色管理弹窗 ---- */
-.fa-voice-dialog { width:min(92vw,900px); max-width:900px; max-height:88vh; padding:0; border:1px solid #ffffff22; border-radius:14px; color:var(--SmartThemeBodyColor,#ddd); background:var(--SmartThemeBlurTintColor,#242424); overflow:hidden; display:flex; flex-direction:column; box-shadow:0 18px 50px #00000066; }
-.fa-voice-dialog:not([open]) { display:none; }
-.fa-voice-dialog::backdrop { background:#000000a0; backdrop-filter:blur(2px); }
-.fa-voice-dialog .fa-voice-dialog-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 18px; border-bottom:1px solid #ffffff18; }
-.fa-voice-dialog .fa-voice-dialog-head h3 { margin:0; font-size:16px; letter-spacing:.02em; }
-.fa-voice-dialog .fa-voice-tabs { display:flex; gap:4px; padding:8px 18px 0; border-bottom:1px solid #ffffff18; flex-wrap:wrap; }
-.fa-voice-dialog .fa-voice-tabs button { border-radius:8px 8px 0 0; border:1px solid transparent; border-bottom:none; background:transparent; padding:7px 14px; opacity:.65; transition:opacity .15s ease, background .15s ease; }
-.fa-voice-dialog .fa-voice-tabs button:hover { opacity:.9; background:#ffffff0d; }
-.fa-voice-dialog .fa-voice-tabs button.fa-tab-active { opacity:1; background:#68cab61f; color:#68cab6; border-color:#68cab64d; border-bottom:none; }
-.fa-voice-dialog .fa-voice-body { padding:14px 18px 20px; overflow:auto; flex:1; min-height:0; }
-.fa-voice-dialog .fa-hint { display:block; opacity:.78; font-size:12px; line-height:1.6; margin:4px 0 10px; }
-.fa-voice-dialog .fa-empty { opacity:.6; font-size:12px; padding:14px; border:1px dashed #ffffff2a; border-radius:8px; text-align:center; margin:8px 0; }
+/* ---- 1.6.0 音色管理弹窗（墨与和纸） ----------------------------------
+   The host theme drives the tint through --SmartTheme* variables, which here is a
+   warm cream, and it repaints every .menu_button as a bare blue link. So the dialog
+   paints its own palette and its own controls: ink on washi, one vermilion accent,
+   monospace numerals, and no borrowed button styling. Everything is scoped to
+   #fa-voice-dialog so the settings drawer keeps the host look. */
+#fa-voice-dialog {
+    --fa-ink: var(--SmartThemeBodyColor, #323232);
+    --fa-ink-soft: color-mix(in srgb, var(--fa-ink) 68%, transparent);
+    --fa-ink-faint: color-mix(in srgb, var(--fa-ink) 42%, transparent);
+    --fa-line: color-mix(in srgb, var(--fa-ink) 16%, transparent);
+    --fa-line-strong: color-mix(in srgb, var(--fa-ink) 30%, transparent);
+    --fa-paper: var(--SmartThemeBlurTintColor, #ece5dc);
+    --fa-sheet: color-mix(in srgb, var(--fa-ink) 4%, var(--fa-paper));
+    --fa-raised: color-mix(in srgb, var(--fa-ink) 8%, var(--fa-paper));
+    --fa-accent: #b0442c;
+    --fa-accent-soft: color-mix(in srgb, var(--fa-accent) 12%, transparent);
+    --fa-serif: "Songti SC", "Source Han Serif SC", "Noto Serif SC", "SimSun", "Clear Han Serif", Lora, serif;
+    --fa-mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
 
-/* Form fields: one labelled block per row, full width, no cramped inline labels. */
-.fa-voice-dialog .fa-field { margin:0 0 12px; }
-.fa-voice-dialog .fa-field-label { display:block; margin:0 0 5px; font-size:12px; font-weight:600; opacity:.9; }
-.fa-voice-dialog input:not([type=checkbox]):not([type=file]), .fa-voice-dialog select, .fa-voice-dialog textarea { width:100%; box-sizing:border-box; border-radius:8px; border:1px solid #ffffff26; background:#00000026; padding:7px 9px; color:inherit; font-size:13px; }
-.fa-voice-dialog input:not([type=checkbox]):not([type=file]):focus, .fa-voice-dialog select:focus, .fa-voice-dialog textarea:focus { outline:none; border-color:#68cab6aa; box-shadow:0 0 0 2px #68cab62e; }
-.fa-voice-dialog textarea { resize:vertical; line-height:1.6; font-family:inherit; }
-.fa-voice-dialog .fa-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0; }
-.fa-voice-dialog .fa-row input, .fa-voice-dialog .fa-row select { flex:1 1 140px; min-width:0; width:auto; }
-
-/* File picker: the native control is kept for its dialog but never shown, because an
-   unstyled <input type=file> is unreadable on a dark theme. */
-.fa-voice-dialog .fa-file-input { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
-.fa-voice-dialog .fa-file-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px; border:1px dashed #ffffff33; border-radius:10px; background:#ffffff08; }
-.fa-voice-dialog .fa-file-row button { flex:0 0 auto; }
-.fa-voice-dialog .fa-file-name { font-size:12px; opacity:.78; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 160px; }
-.fa-voice-dialog .fa-file-name.fa-file-picked { opacity:1; color:#68cab6; }
-
-/* Groups. The whole header toggles folding; the chevron mirrors the state. */
-.fa-voice-dialog .fa-group { border:1px solid #ffffff14; border-radius:10px; margin:10px 0; background:#ffffff05; overflow:hidden; }
-.fa-voice-dialog .fa-group-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 10px; margin:0; background:#ffffff0a; border-bottom:1px solid #ffffff10; }
-.fa-voice-dialog .fa-group-folded .fa-group-head { border-bottom:none; }
-.fa-voice-dialog .fa-group-name { flex:1 1 auto; font-size:14px; cursor:pointer; }
-.fa-voice-dialog .fa-group-name:hover { color:#68cab6; }
-.fa-voice-dialog .fa-group-toggle { flex:0 0 auto !important; width:22px !important; min-width:22px !important; height:22px; padding:0 !important; font-size:10px !important; line-height:20px !important; text-align:center; border-radius:6px; background:#ffffff12; border:1px solid #ffffff1f; opacity:.8; color:inherit; }
-.fa-voice-dialog .fa-group-toggle:hover { opacity:1; background:#ffffff1f; }
-.fa-voice-dialog .fa-group-head:hover { background:#ffffff12; }
-.fa-voice-dialog .fa-group-count { opacity:.78; font-size:12px; }
-.fa-voice-dialog .fa-group .fa-lib-item:last-child, .fa-voice-dialog .fa-group .fa-empty:last-child { margin-bottom:0; }
-.fa-voice-dialog .fa-group > .fa-lib-item, .fa-voice-dialog .fa-group > .fa-empty { margin:0 10px; }
-
-.fa-voice-dialog .fa-bulk { position:sticky; top:0; z-index:2; padding:10px; background:var(--SmartThemeBlurTintColor,#242424); border:1px solid #ffffff1f; border-radius:10px; margin-bottom:12px; }
-.fa-voice-dialog .fa-lib-item { display:flex; flex-direction:column; gap:4px; padding:8px 0; border-bottom:1px solid #ffffff10; }
-.fa-voice-dialog .fa-lib-item:last-child { border-bottom:none; }
-.fa-voice-dialog .fa-lib-item.fa-inactive { opacity:.55; }
-.fa-voice-dialog .fa-lib-head { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-.fa-voice-dialog .fa-lib-head input[type=checkbox] { flex:0 0 auto; width:auto; }
-.fa-voice-dialog .fa-lib-name { flex:1 1 140px; min-width:100px; width:auto; }
-.fa-voice-dialog .fa-lib-head small { opacity:.8; font-size:11px; white-space:nowrap; }
-.fa-voice-dialog .fa-search-name { flex:1 1 160px; min-width:120px; font-size:13px; }
-.fa-voice-dialog button { writing-mode:horizontal-tb !important; white-space:nowrap; height:auto; line-height:1.5; flex:0 0 auto; border-radius:8px; transition:background .15s ease, border-color .15s ease; }
-.fa-voice-dialog button:hover { border-color:#68cab688; }
-.fa-voice-dialog .fa-btn-danger { color:#ff8a8a !important; border-color:#ff8a8a66 !important; }
-.fa-voice-dialog .fa-btn-danger:hover { background:#ff8a8a22 !important; }
-@media (max-width:640px) {
-    .fa-voice-dialog { width:96vw; max-height:92vh; }
-    .fa-voice-dialog .fa-lib-head small { white-space:normal; flex-basis:100%; }
-    .fa-voice-dialog .fa-file-name { flex-basis:100%; }
+    width: min(94vw, 940px);
+    max-width: 940px;
+    max-height: 88vh;
+    margin: auto;
+    padding: 0;
+    border: 1px solid var(--fa-line-strong);
+    border-radius: 4px;
+    color: var(--fa-ink);
+    background: var(--fa-paper);
+    box-shadow: 0 30px 80px #00000040, 0 2px 0 #ffffff40 inset;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    font-family: inherit;
+    animation: fa-sheet-in .22s cubic-bezier(.2, .8, .3, 1);
 }
+#fa-voice-dialog:not([open]) { display: none; }
+#fa-voice-dialog::backdrop { background: #12100ecc; backdrop-filter: blur(3px) saturate(.7); }
+@keyframes fa-sheet-in { from { opacity: 0; transform: translateY(10px) scale(.99); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { #fa-voice-dialog { animation: none; } }
+
+/* Head: mono kicker over a serif title, hairline rule beneath. */
+#fa-voice-dialog .fa-voice-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 24px 14px; border-bottom: 1px solid var(--fa-line); }
+#fa-voice-dialog .fa-head-titles { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+#fa-voice-dialog .fa-head-kicker { font-family: var(--fa-mono); font-size: 10px; letter-spacing: .28em; color: var(--fa-accent); text-transform: uppercase; }
+#fa-voice-dialog .fa-head-title { margin: 0; font-family: var(--fa-serif); font-size: 22px; font-weight: 600; letter-spacing: .1em; line-height: 1.2; color: var(--fa-ink); }
+#fa-voice-dialog .fa-head-close { flex: 0 0 auto !important; width: 32px !important; min-width: 32px !important; height: 32px; padding: 0 !important; font-size: 18px !important; line-height: 30px !important; border-radius: 2px; }
+
+/* Tabs: stacked label + blurb, underline for the active one. */
+#fa-voice-dialog .fa-voice-tabs { display: flex; gap: 0; padding: 0 24px; border-bottom: 1px solid var(--fa-line); background: var(--fa-sheet); flex-wrap: wrap; }
+#fa-voice-dialog .fa-tab { display: inline-flex !important; flex-direction: column; align-items: flex-start; gap: 1px; padding: 11px 20px 10px !important; border: 0 !important; border-bottom: 2px solid transparent !important; border-radius: 0 !important; background: transparent !important; color: var(--fa-ink-soft) !important; opacity: .8; transition: color .15s ease, border-color .15s ease, opacity .15s ease; }
+#fa-voice-dialog .fa-tab:hover { color: var(--fa-ink) !important; opacity: 1; }
+#fa-voice-dialog .fa-tab .fa-tab-label { font-family: var(--fa-serif); font-size: 15px; line-height: 1.35; letter-spacing: .1em; }
+#fa-voice-dialog .fa-tab .fa-tab-blurb { font-family: var(--fa-mono); font-size: 8.5px; line-height: 1.3; letter-spacing: .015em; padding-left: 1px; color: var(--fa-ink-faint); white-space: nowrap; }
+#fa-voice-dialog .fa-tab.fa-tab-active { color: var(--fa-ink) !important; opacity: 1; border-bottom-color: var(--fa-accent) !important; }
+#fa-voice-dialog .fa-tab.fa-tab-active .fa-tab-blurb { color: var(--fa-accent); }
+
+#fa-voice-dialog .fa-voice-body { padding: 16px 24px 22px; overflow: auto; flex: 1; min-height: 0; scrollbar-width: thin; }
+#fa-voice-dialog .fa-voice-foot { display: flex; align-items: center; justify-content: flex-end; padding: 8px 24px; border-top: 1px solid var(--fa-line); background: var(--fa-sheet); }
+#fa-voice-dialog .fa-foot-hint { font-family: var(--fa-mono); font-size: 10px; letter-spacing: .05em; color: var(--fa-ink-faint); }
+
+/* Typography helpers */
+#fa-voice-dialog .fa-hint { display: block; font-size: 12px; line-height: 1.7; color: var(--fa-ink-soft); margin: 2px 0 0; }
+#fa-voice-dialog .fa-lead { margin: 0 0 14px; padding-left: 12px; border-left: 2px solid var(--fa-accent); }
+#fa-voice-dialog .fa-lead-title { font-family: var(--fa-serif); font-size: 15px; letter-spacing: .06em; margin-bottom: 2px; }
+#fa-voice-dialog .fa-empty { padding: 18px 14px; border: 1px dashed var(--fa-line-strong); border-radius: 3px; text-align: center; font-size: 12px; line-height: 1.7; color: var(--fa-ink-soft); margin: 10px 0; }
+
+/* Controls. The host's .menu_button is deliberately not used; every control is a
+   .fa-menu_button so no theme rule can repaint it as a link. */
+#fa-voice-dialog .fa-menu_button,
+#fa-subdialog-confirm .fa-menu_button,
+#fa-subdialog-ask .fa-menu_button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    flex: 0 0 auto; width: auto !important; min-width: 0 !important; height: auto;
+    margin: 0; padding: 5px 12px;
+    font-family: inherit; font-size: 12.5px; line-height: 1.5; white-space: nowrap;
+    writing-mode: horizontal-tb !important; text-orientation: mixed !important;
+    color: var(--fa-ink, inherit) !important;
+    background: transparent; border: 1px solid var(--fa-line-strong, #00000033); border-radius: 3px;
+    cursor: pointer; opacity: 1; text-shadow: none;
+    transition: background .14s ease, border-color .14s ease, color .14s ease, transform .1s ease;
+}
+#fa-voice-dialog .fa-menu_button:hover { background: color-mix(in srgb, var(--fa-ink) 8%, transparent); border-color: var(--fa-ink-soft); }
+#fa-voice-dialog .fa-menu_button:active { transform: translateY(1px); }
+#fa-voice-dialog .fa-menu_button:focus-visible { outline: 2px solid var(--fa-accent); outline-offset: 2px; }
+#fa-voice-dialog .fa-menu_button.fa-quiet { border-color: transparent; color: var(--fa-ink-soft) !important; padding: 4px 8px; }
+#fa-voice-dialog .fa-menu_button.fa-quiet:hover { color: var(--fa-ink) !important; border-color: var(--fa-line-strong); background: color-mix(in srgb, var(--fa-ink) 7%, transparent); }
+#fa-voice-dialog .fa-menu_button.fa-primary { color: var(--fa-paper) !important; background: var(--fa-accent); border-color: var(--fa-accent); }
+#fa-voice-dialog .fa-menu_button.fa-primary:hover { background: color-mix(in srgb, var(--fa-accent) 84%, #000); border-color: color-mix(in srgb, var(--fa-accent) 84%, #000); }
+#fa-voice-dialog .fa-menu_button.fa-danger { color: var(--fa-accent) !important; }
+#fa-voice-dialog .fa-menu_button.fa-danger:hover { background: var(--fa-accent-soft); border-color: var(--fa-accent); }
+
+#fa-voice-dialog .fa-input,
+#fa-subdialog-ask .fa-input,
+#fa-subdialog-confirm .fa-input {
+    width: 100%; box-sizing: border-box; min-width: 0;
+    padding: 7px 10px; font-family: inherit; font-size: 13px; line-height: 1.5;
+    color: inherit; background: transparent; border: 1px solid var(--fa-line-strong, #00000033); border-radius: 3px;
+    transition: border-color .14s ease, box-shadow .14s ease;
+}
+#fa-voice-dialog .fa-input:focus,
+#fa-subdialog-ask .fa-input:focus {
+    outline: none; border-color: var(--fa-accent);
+    box-shadow: 0 0 0 3px var(--fa-accent-soft, #b0442c22);
+}
+#fa-voice-dialog .fa-input::placeholder { color: var(--fa-ink-faint, #8888); }
+#fa-voice-dialog .fa-textarea { resize: vertical; min-height: 64px; line-height: 1.7; }
+#fa-voice-dialog .fa-select { cursor: pointer; }
+#fa-voice-dialog .fa-input.fa-vsearch { font-family: inherit; }
+
+/* Toolbar: filter field, live counts, then the bulk bar once something is ticked. */
+#fa-voice-dialog .fa-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+#fa-voice-dialog .fa-toolbar .fa-vsearch { flex: 1 1 220px; }
+#fa-voice-dialog .fa-toolbar-meta { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+#fa-voice-dialog .fa-stat { font-family: var(--fa-mono); font-size: 11px; letter-spacing: .03em; color: var(--fa-ink-soft); }
+#fa-voice-dialog .fa-stat-on { color: var(--fa-accent); }
+
+#fa-voice-dialog .fa-bulk { display: flex; flex-direction: column; gap: 9px; margin: 0 0 14px; padding: 11px 13px; border: 1px solid var(--fa-accent); border-left-width: 4px; border-radius: 3px; background: var(--fa-accent-soft); }
+#fa-voice-dialog .fa-bulk-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+#fa-voice-dialog .fa-bulk-head .fa-solid { color: var(--fa-accent); }
+#fa-voice-dialog .fa-bulk-head > span:nth-child(2) { flex: 1; }
+#fa-voice-dialog .fa-bulk-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+#fa-voice-dialog .fa-bulk-label { display: inline-flex; align-items: center; gap: 7px; margin: 0; font-size: 12.5px; }
+#fa-voice-dialog .fa-bulk-label .fa-select { width: auto; min-width: 160px; }
+
+/* Groups: a hairline rail, a serif name, mono counts. */
+#fa-voice-dialog .fa-group { margin: 0 0 6px; border-bottom: 1px solid var(--fa-line); }
+#fa-voice-dialog .fa-group:last-of-type { border-bottom: none; }
+#fa-voice-dialog .fa-group-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 2px; }
+#fa-voice-dialog .fa-group-toggle { flex: 0 0 auto !important; width: 24px !important; min-width: 24px !important; height: 24px; padding: 0 !important; border: 0 !important; background: transparent !important; color: var(--fa-ink-soft) !important; }
+#fa-voice-dialog .fa-group-toggle:hover { color: var(--fa-accent) !important; background: transparent !important; }
+#fa-voice-dialog .fa-group-toggle .fa-solid { font-size: 11px; transition: transform .18s ease; transform: rotate(0deg); }
+#fa-voice-dialog .fa-group-folded .fa-group-toggle .fa-solid { transform: rotate(-90deg); }
+#fa-voice-dialog .fa-group-name { display: inline-flex; align-items: baseline; gap: 9px; flex: 1 1 auto; min-width: 0; cursor: pointer; }
+#fa-voice-dialog .fa-group-title { font-family: var(--fa-serif); font-size: 15px; letter-spacing: .06em; }
+#fa-voice-dialog .fa-group-name:hover .fa-group-title { color: var(--fa-accent); }
+#fa-voice-dialog .fa-group-count { font-family: var(--fa-mono); font-size: 11px; color: var(--fa-ink-faint); }
+#fa-voice-dialog .fa-group-actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; opacity: .55; transition: opacity .15s ease; }
+#fa-voice-dialog .fa-group:hover .fa-group-actions,
+#fa-voice-dialog .fa-group-actions:focus-within { opacity: 1; }
+#fa-voice-dialog .fa-group .fa-menu_button.fa-quiet { font-size: 11.5px; padding: 3px 7px; }
+#fa-voice-dialog .fa-group-folded .fa-group-head { padding-bottom: 6px; }
+
+/* One voice = one line. Grid keeps the pick box, the name, the language tag,
+   the activation switch and the tools on one row, and stacks them on narrow screens. */
+#fa-voice-dialog .fa-voice-row { display: grid; grid-template-columns: 16px auto minmax(96px, 1fr) auto auto; align-items: center; gap: 9px; padding: 4px 4px 4px 5px; border-top: 1px solid var(--fa-line); }
+#fa-voice-dialog .fa-voice-row:hover { background: color-mix(in srgb, var(--fa-ink) 4%, transparent); }
+#fa-voice-dialog .fa-voice-row.fa-row-off { opacity: .52; }
+#fa-voice-dialog .fa-pick { display: flex; align-items: center; margin: 0; }
+/* The host paints every bare checkbox with its own frame, so both boxes are drawn
+   from scratch. */
+#fa-voice-dialog input.fa-tick[type=checkbox] { display: none; }
+#fa-voice-dialog .fa-pick { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin: 0; cursor: pointer; }
+#fa-voice-dialog .fa-pick::before { content: ""; display: block; box-sizing: border-box; width: 14px; height: 14px; border: 1px solid var(--fa-line-strong); border-radius: 2px; background: transparent; transition: background .12s ease, border-color .12s ease; }
+#fa-voice-dialog .fa-pick:hover::before { border-color: var(--fa-accent); }
+#fa-voice-dialog .fa-pick:has(input:checked)::before { background: var(--fa-accent); border-color: var(--fa-accent); }
+#fa-voice-dialog .fa-pick:has(input:checked)::after { content: ""; position: absolute; margin-left: -1px; margin-top: -2px; width: 4px; height: 8px; border: solid var(--fa-paper); border-width: 0 2px 2px 0; transform: rotate(40deg); }
+#fa-voice-dialog .fa-pick { position: relative; }
+#fa-voice-dialog .fa-pick:focus-within::before { outline: 2px solid var(--fa-accent); outline-offset: 2px; }
+#fa-voice-dialog .fa-name { padding: 2px 5px; font-size: 13px; line-height: 1.5; border-color: transparent; background-color: transparent; background-image: none; }
+#fa-voice-dialog .fa-name:hover { border-color: var(--fa-line-strong); }
+#fa-voice-dialog .fa-name:focus { background-color: transparent; background-image: none; }
+#fa-voice-dialog .fa-vtags { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+/* Host theme rule: input => font-family: var(--CodeFont) !important. The bare <input>
+   carrying the voice name therefore gets a glyph the dialog has never asked for, and the
+   per-input font-family:inherit cannot beat !important. Stated with !important too. */
+#fa-voice-dialog input:not([type=checkbox]):not([type=file]),
+#fa-subdialog-ask input:not([type=checkbox]):not([type=file]) { font-family: inherit !important; }
+#fa-voice-dialog textarea, #fa-voice-dialog select { font-family: inherit !important; }
+#fa-voice-dialog .fa-vtag { font-family: var(--fa-mono); font-size: 9.5px; line-height: 1.7; padding: 0 5px; border: 1px solid var(--fa-line); border-radius: 2px; color: var(--fa-ink-soft); letter-spacing: .04em; white-space: nowrap; }
+#fa-voice-dialog .fa-vtag-clone { color: var(--fa-accent); border-color: color-mix(in srgb, var(--fa-accent) 45%, transparent); }
+#fa-voice-dialog .fa-vtag-off { color: var(--fa-ink-faint); border-style: dashed; }
+#fa-voice-dialog .fa-vtag-count { color: var(--fa-ink-faint); }
+#fa-voice-dialog .fa-row-tools { display: flex; align-items: center; gap: 1px; justify-content: flex-end; opacity: .55; transition: opacity .15s ease; }
+#fa-voice-dialog .fa-voice-row:hover .fa-row-tools,
+#fa-voice-dialog .fa-search-row:hover .fa-row-tools,
+#fa-voice-dialog .fa-row-tools:focus-within { opacity: 1; }
+#fa-voice-dialog .fa-row-tools .fa-menu_button { font-size: 11.5px; padding: 2px 6px; }
+
+/* A switch instead of a second naked checkbox: activation is a state, not a choice. */
+#fa-voice-dialog .fa-switch { position: relative; display: inline-flex; align-items: center; flex: 0 0 auto; margin: 0; cursor: pointer; }
+/* Two classes beat the host's own "input[type=checkbox]" rule, which would otherwise keep
+   its flex:0 0 auto sizing and paint a visible box. */
+#fa-voice-dialog label.fa-switch > input.fa-switch-input[type=checkbox] { display: none; }
+#fa-voice-dialog .fa-switch-track { width: 28px; height: 15px; border-radius: 999px; border: 1px solid var(--fa-line-strong); background: transparent; position: relative; transition: background .15s ease, border-color .15s ease; }
+#fa-voice-dialog .fa-switch-track::after { content: ""; position: absolute; top: 1px; left: 1px; width: 9px; height: 9px; border-radius: 50%; background: var(--fa-ink-faint); transition: transform .16s cubic-bezier(.2,.8,.3,1), background .15s ease; }
+#fa-voice-dialog label.fa-switch > input.fa-switch-input[type=checkbox]:checked + .fa-switch-track { background: var(--fa-accent-soft); border-color: var(--fa-accent); }
+#fa-voice-dialog label.fa-switch > input.fa-switch-input[type=checkbox]:checked + .fa-switch-track::after { transform: translateX(13px); background: var(--fa-accent); }
+#fa-voice-dialog label.fa-switch > input.fa-switch-input[type=checkbox]:focus-visible + .fa-switch-track { outline: 2px solid var(--fa-accent); outline-offset: 2px; }
+
+/* Search tab */
+#fa-voice-dialog .fa-vsearchbar { display: flex; gap: 8px; align-items: stretch; margin-bottom: 6px; }
+#fa-voice-dialog .fa-vsearchbar .fa-vsearch { flex: 1 1 auto; }
+#fa-voice-dialog .fa-search-status { min-height: 18px; font-family: var(--fa-mono); font-size: 10.5px; letter-spacing: .04em; color: var(--fa-ink-faint); }
+#fa-voice-dialog .fa-search-status.fa-busy { color: var(--fa-accent); }
+#fa-voice-dialog .fa-search-results { margin-top: 6px; }
+#fa-voice-dialog .fa-search-row { padding: 8px 4px; border-top: 1px solid var(--fa-line); }
+#fa-voice-dialog .fa-search-row:first-child { border-top: none; }
+#fa-voice-dialog .fa-search-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#fa-voice-dialog .fa-search-name { font-family: var(--fa-serif); flex: 0 1 auto; font-size: 14px; letter-spacing: .04em; }
+#fa-voice-dialog .fa-search-head .fa-vtags { flex: 1 1 auto; }
+#fa-voice-dialog .fa-search-head .fa-row-tools { opacity: .75; }
+
+/* Clone tab: two cards, the form and the storage ledger. */
+#fa-voice-dialog .fa-card { padding: 16px; margin: 0 0 12px; border: 1px solid var(--fa-line); border-radius: 3px; background: var(--fa-sheet); }
+#fa-voice-dialog .fa-card-muted { background: transparent; }
+#fa-voice-dialog .fa-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+#fa-voice-dialog .fa-card-head .fa-solid { color: var(--fa-ink-faint); font-size: 12px; }
+#fa-voice-dialog .fa-card-title { font-family: var(--fa-serif); font-size: 14px; letter-spacing: .06em; }
+#fa-voice-dialog .fa-field { margin: 0 0 13px; }
+#fa-voice-dialog .fa-field:last-of-type { margin-bottom: 8px; }
+#fa-voice-dialog .fa-field-label { display: block; margin: 0 0 5px; font-family: var(--fa-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--fa-ink-soft); }
+#fa-voice-dialog .fa-field .fa-hint { margin-top: 6px; }
+#fa-voice-dialog .fa-file-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px dashed var(--fa-line-strong); border-radius: 3px; background: transparent; }
+#fa-voice-dialog .fa-file-row .fa-waveform { color: var(--fa-ink-faint); }
+#fa-voice-dialog .fa-file-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+#fa-voice-dialog .fa-file-name { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--fa-mono); font-size: 11px; color: var(--fa-ink-soft); }
+#fa-voice-dialog .fa-file-name.fa-file-picked { color: var(--fa-accent); }
+#fa-voice-dialog .fa-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+#fa-voice-dialog .fa-actions-end { justify-content: flex-end; }
+#fa-voice-dialog .fa-usage { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 2px; }
+#fa-voice-dialog .fa-usage-num { font-family: var(--fa-mono); font-size: 24px; letter-spacing: -.01em; color: var(--fa-ink); }
+#fa-voice-dialog .fa-usage-label { font-size: 12px; color: var(--fa-ink-soft); }
+
+/* The confirm/ask overlays: same paper, shallower, stacked above the sheet. */
+#fa-subdialog-ask, #fa-subdialog-confirm {
+    width: min(88vw, 420px); max-width: 420px; margin: auto; padding: 0;
+    border: 1px solid #0000004d; border-radius: 4px;
+    color: var(--SmartThemeBodyColor, #323232);
+    background: var(--SmartThemeBlurTintColor, #ece5dc);
+    box-shadow: 0 24px 60px #00000055;
+    --fa-ink: var(--SmartThemeBodyColor, #323232);
+    --fa-ink-soft: color-mix(in srgb, var(--fa-ink) 68%, transparent);
+    --fa-ink-faint: color-mix(in srgb, var(--fa-ink) 42%, transparent);
+    --fa-line: color-mix(in srgb, var(--fa-ink) 16%, transparent);
+    --fa-line-strong: color-mix(in srgb, var(--fa-ink) 30%, transparent);
+    --fa-paper: var(--SmartThemeBlurTintColor, #ece5dc);
+    --fa-accent: #b0442c;
+    --fa-accent-soft: color-mix(in srgb, var(--fa-accent) 12%, transparent);
+    --fa-serif: "Songti SC", "Source Han Serif SC", "Noto Serif SC", "SimSun", "Clear Han Serif", Lora, serif;
+    --fa-mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
+    animation: fa-sheet-in .16s ease-out;
+}
+#fa-subdialog-ask::backdrop, #fa-subdialog-confirm::backdrop { background: #12100e66; }
+#fa-subdialog-ask .fa-subdialog-body, #fa-subdialog-confirm .fa-subdialog-body { padding: 16px 18px 14px; margin: 0; }
+#fa-subdialog-ask .fa-subdialog-head, #fa-subdialog-confirm .fa-subdialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+#fa-subdialog-ask h4, #fa-subdialog-confirm h4 { margin: 0; font-family: var(--fa-serif); font-size: 15px; font-weight: 600; letter-spacing: .06em; color: var(--fa-ink); }
+#fa-subdialog-confirm .fa-subdialog-text { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--fa-ink-soft); }
+#fa-subdialog-confirm .fa-menu_button.fa-primary { background: #b0442c; border-color: #b0442c; color: #fff !important; }
+#fa-subdialog-confirm .fa-menu_button.fa-danger { color: #b0442c !important; }
+#fa-subdialog-confirm .fa-menu_button.fa-primary[data-kind="danger"], #fa-subdialog-confirm .fa-menu_button.fa-primary.fa-danger { background: #b0442c; border-color: #b0442c; color: #fff !important; }
+
+@media (max-width: 720px) {
+    #fa-voice-dialog { width: 97vw; max-height: 92vh; }
+    #fa-voice-dialog .fa-voice-dialog-head { padding: 16px 16px 12px; }
+    #fa-voice-dialog .fa-voice-tabs { padding: 0 12px; }
+    #fa-voice-dialog .fa-voice-body { padding: 14px 16px 18px; }
+    #fa-voice-dialog .fa-voice-row { grid-template-columns: 16px auto minmax(70px, 1fr) auto; grid-template-areas: "pick switch name tags" "tools tools tools tools"; row-gap: 3px; }
+    #fa-voice-dialog .fa-voice-row .fa-pick { grid-area: pick; }
+    #fa-voice-dialog .fa-voice-row .fa-name { grid-area: name; }
+    #fa-voice-dialog .fa-voice-row .fa-switch { grid-area: switch; }
+    #fa-voice-dialog .fa-voice-row .fa-vtags { grid-area: tags; }
+    #fa-voice-dialog .fa-voice-row .fa-row-tools { grid-area: tools; justify-content: flex-start; opacity: 1; padding-left: 18px; }
+    #fa-voice-dialog .fa-voice-row .fa-vtags { justify-content: flex-start; }
+    #fa-voice-dialog .fa-group-actions { opacity: 1; }
+    #fa-voice-dialog .fa-tab .fa-tab-blurb { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { #fa-subdialog-ask, #fa-subdialog-confirm { animation: none; } }
+
