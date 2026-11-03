@@ -10,6 +10,7 @@
 import { collectGroupNames, groupEntries, addGroup, renameGroup, deleteGroup, assignGroup, toggleAll, removeEntries, setActive } from './voice-groups.mjs';
 import { formatBytes } from './ref-audio.mjs';
 import { searchVoices } from './voice-library.mjs';
+import { describeVoice, needsDescription } from './ai-voice.mjs';
 
 const UNGROUPED = '未分组';
 const TABS = [
@@ -25,6 +26,7 @@ export function installVoicePanel(deps) {
     const {
         context, settings, log, save, library, setLibrary, refresh,
         preview, search, addClone, removeRef, clearRefs, refUsage,
+        transcribe = null, describe = null, previewAudio = null,
         settingsHost = null, adoptSettings = null, title = TITLE,
     } = deps;
     let dialog = null, tab = 'library', selection = new Set(), results = [], lastQuery = '';
@@ -32,6 +34,13 @@ export function installVoicePanel(deps) {
     // Collapsed groups survive a re-render, so ticking a voice does not spring a
     // group the user folded away back open.
     const collapsed = new Set();
+    // One-line red text under the affected row. Kept next to the row's id (or the
+    // group's name) instead of in a global banner so the message points at the
+    // voice it is actually about.
+    const rowErrors = new Map();
+    const groupErrors = new Map();
+    // In-flight flags so a double click cannot start the same job twice.
+    let describingId = '', fillingGroup = '';
     // The confirm/ask overlays live in the top layer next to the dialog.
     let askDialog = null, confirmDialog = null, formDialog = null;
 
@@ -135,6 +144,60 @@ export function installVoicePanel(deps) {
     const renameRef = deps.renameRef || (async () => { throw new Error('当前构建不支持迁移参考音频'); });
     function hint(text) { return el('small', { class: 'fa-hint', text }); }
     function icon(name) { return el('i', { class: 'fa-solid ' + name, 'aria-hidden': 'true' }); }
+    function rowError(text, id) {
+        const node = el('div', { class: 'fa-vrow-error', role: 'alert' });
+        node.dataset.errorFor = id;
+        node.textContent = text;
+        return node;
+    }
+    // Which model answers the description prompt. Read every time so switching the
+    // chat completion source in SillyTavern takes effect on the next click.
+    function describeTarget() {
+        const source = context();
+        return {
+            model: source.model || '',
+            source: source.chatCompletionSettings?.chat_completion_source || 'openai',
+            reverseProxy: source.chatCompletionSettings?.reverse_proxy || '',
+            customUrl: source.chatCompletionSettings?.custom_url || '',
+        };
+    }
+    // Preview audio for the description prompt. Null is fine: the prompt is text
+    // only in that case, the model just has less to go on.
+    async function clipFor(entry) {
+        if (!previewAudio) return null;
+        try { return await previewAudio(entry); }
+        catch (e) { log('WARN', '试听音频生成失败，改用文字推断：' + e.message); return null; }
+    }
+    async function describeOne(entry) {
+        if (!describe) { rowErrors.set(entry.id, '当前版本没有接通「酒馆默认模型」'); render(); return; }
+        describingId = entry.id;
+        rowErrors.delete(entry.id);
+        render();
+        try {
+            const audio = await clipFor(entry);
+            const result = await describe({
+                name: entry.name || entry.id,
+                group: entry.group || '',
+                guide: entry.guide || '',
+                audio,
+                settings: describeTarget(),
+            });
+            const text = String(result?.text || '').trim();
+            if (!text) throw new Error('模型返回了空描述');
+            // Hand-written descriptions are the user's work; only an empty field is
+            // filled. The button is hidden for those rows anyway.
+            if (String(entry.guide || '').trim()) throw new Error('这条音色已经有描述了，跳过以免覆盖');
+            entry.guide = text;
+            setLibrary(library());
+            log('INFO', `已生成「${entry.name || entry.id}」的音色描述` + (result?.usedAudio ? '（含试听音频）' : '（无音频）'));
+        } catch (e) {
+            rowErrors.set(entry.id, e.message);
+            log('ERROR', '生成音色描述失败：' + e.message);
+        } finally {
+            describingId = '';
+            refresh(); render();
+        }
+    }
 
     // A themed replacement for prompt(), which would paint the browser's own grey
     // box over a carefully styled dialog.
@@ -314,6 +377,48 @@ export function installVoicePanel(deps) {
         host.append(el('div', { class: 'fa-newgroup' }, icon('fa-folder-plus'), nameInput, button('新建组', addGroupRow)));
     }
 
+    // Fills only the voices whose description is still empty. Sequential on
+    // purpose: these go through the user's own chat backend and a burst of parallel
+    // calls is the fastest way to trip a rate limit.
+    async function fillGroup(name, entries, list) {
+        if (!describe) { groupErrors.set(name, '当前版本没有接通「酒馆默认模型」'); render(); return; }
+        const targets = entries.filter(needsDescription);
+        if (!targets.length) return;
+        const ok = await confirmAction(
+            `为「${name}」补充 ${targets.length} 条音色描述？`,
+            '只补描述为空的音色，已有描述一律不动。每条会调用一次酒馆当前默认模型，可能需要一点时间。');
+        if (!ok) return;
+        fillingGroup = name;
+        groupErrors.delete(name);
+        render();
+        let done = 0, failed = 0;
+        for (const entry of targets) {
+            if (String(entry.guide || '').trim()) continue;
+            try {
+                const audio = await clipFor(entry);
+                const result = await describe({
+                    name: entry.name || entry.id, group: entry.group || '', guide: '',
+                    audio, settings: describeTarget(),
+                });
+                const text = String(result?.text || '').trim();
+                if (!text) throw new Error('模型返回了空描述');
+                if (String(entry.guide || '').trim()) continue;
+                entry.guide = text;
+                done++;
+            } catch (e) {
+                failed++;
+                rowErrors.set(entry.id, e.message);
+                log('ERROR', `「${entry.name || entry.id}」描述生成失败：` + e.message);
+            }
+            setLibrary(library());
+            refresh();
+        }
+        fillingGroup = '';
+        if (failed) groupErrors.set(name, `${done} 条成功，${failed} 条失败，失败原因见各行红字`);
+        log('INFO', `「${name}」音色描述补充完成：${done} 成功，${failed} 失败`);
+        refresh(); render();
+    }
+
     function groupSection(name, entries, list, options = {}) {
         const folded = collapsed.has(name);
         const section = el('section', { class: 'fa-group' + (folded ? ' fa-group-folded' : '') });
@@ -325,7 +430,11 @@ export function installVoicePanel(deps) {
             render();
         });
         const ids = entries.map(e => e.id);
+        const missing = entries.filter(needsDescription).length;
         const actions = el('div', { class: 'fa-group-actions' },
+            // Only shown when there is something to fill, so a tidy group keeps a
+            // tidy header.
+            missing ? quiet(fillingGroup === name ? `补充中… 剩 ${missing}` : `一键补充 ${missing}`, () => { fillGroup(name, entries, list); }) : null,
             quiet('全选', () => { for (const id of entries.map(e => e.id)) selection.add(id); render(); }),
             options.loose ? null : quiet('全部启用', () => { toggleAll(list, ids, 'enable'); setLibrary(list); refresh(); render(); }),
             options.loose ? null : quiet('全部禁用', () => { toggleAll(list, ids, 'disable'); setLibrary(list); refresh(); render(); }),
@@ -351,9 +460,13 @@ export function installVoicePanel(deps) {
                 el('span', { class: 'fa-group-count', text: `${activeInside}/${entries.length}` })),
             actions);
         section.append(head);
+        if (groupErrors.has(name)) section.append(rowError(groupErrors.get(name), 'group:' + name));
         if (folded) return section;
         if (!entries.length) section.append(el('div', { class: 'fa-empty', text: options.loose ? '没有未分组的音色。' : '这个组还没有音色。可以从“搜索音色”添加，或勾选已有音色后移动过来。' }));
-        for (const entry of entries) section.append(entryRow(entry, list));
+        for (const entry of entries) {
+            section.append(entryRow(entry, list));
+            if (rowErrors.has(entry.id)) section.append(rowError(rowErrors.get(entry.id), entry.id));
+        }
         return section;
     }
 
@@ -377,6 +490,12 @@ export function installVoicePanel(deps) {
             entry.active === false ? el('span', { class: 'fa-vtag fa-vtag-off', text: '未激活' }) : null);
         const tools = el('div', { class: 'fa-row-tools' },
             quiet('试听', () => { try { preview(entry); } catch (e) { log('ERROR', e.message); } }),
+            // Only offered when the description is empty: the rule is "never
+            // overwrite what the user wrote", so there is nothing to click on a
+            // filled row.
+            needsDescription(entry) && describe
+                ? quiet(describingId === entry.id ? '生成中…' : '✨ 生成描述', () => { describeOne(entry); })
+                : null,
             quiet('编辑', async () => {
                 const answer = await askForm(`编辑「${entry.name || entry.id}」`, [
                     { key: 'name', label: '音色名称', value: entry.name || entry.id },
@@ -490,10 +609,40 @@ export function installVoicePanel(deps) {
         const transcript = el('textarea', { class: 'fa-input fa-textarea', id: 'fa-clone-transcript', rows: '3', placeholder: '参考音频里说的原话，必须一字不差（含标点）' });
         const info = el('span', { class: 'fa-file-name', id: 'fa-clone-info', text: '尚未选择文件' });
         const pick = button('选择音频文件', () => file.click());
+        const asrInfo = el('small', { class: 'fa-hint fa-asr-info' });
+        let transcribing = false;
+        const asrBtn = quiet('生成逐字稿', async () => {
+            const picked = file.files?.[0];
+            if (!picked) { asrInfo.textContent = '请先选择参考音频文件'; asrInfo.dataset.bad = '1'; return; }
+            if (!transcribe) { asrInfo.textContent = '当前版本没有接通语音识别'; asrInfo.dataset.bad = '1'; return; }
+            if (transcribing) return;
+            if (String(transcript.value || '').trim()
+                && !await confirmAction('覆盖当前逐字稿？', '识别结果会替换输入框里已有的文字。如果原来那份是你核对过的，请先复制出来。')) return;
+            transcribing = true;
+            asrBtn.textContent = '识别中…';
+            asrBtn.disabled = true;
+            asrInfo.dataset.bad = '';
+            asrInfo.textContent = '正在上传音频并识别，长音频需要几秒钟…';
+            try {
+                const text = await transcribe({ file: picked, language: language.value });
+                transcript.value = text;
+                asrInfo.textContent = '识别完成，请对照音频核对一遍再保存。';
+                log('INFO', '逐字稿已生成：' + text.slice(0, 40) + (text.length > 40 ? '…' : ''));
+            } catch (e) {
+                asrInfo.textContent = e.message;
+                asrInfo.dataset.bad = '1';
+                log('ERROR', '生成逐字稿失败：' + e.message);
+            } finally {
+                transcribing = false;
+                asrBtn.textContent = '生成逐字稿';
+                asrBtn.disabled = false;
+            }
+        });
         file.addEventListener('change', () => {
             const picked = file.files?.[0];
             info.textContent = picked ? `${picked.name} · ${formatBytes(picked.size)}` : '尚未选择文件';
             info.classList.toggle('fa-file-picked', Boolean(picked));
+            if (asrInfo) { asrInfo.textContent = ''; asrInfo.dataset.bad = ''; }
         });
         host.append(el('div', { class: 'fa-card' },
             el('div', { class: 'fa-field' },
@@ -502,7 +651,9 @@ export function installVoicePanel(deps) {
             el('div', { class: 'fa-field' }, el('label', { class: 'fa-field-label', text: '名称' }), name),
             el('div', { class: 'fa-field' }, el('label', { class: 'fa-field-label', text: '语言' }), language),
             el('div', { class: 'fa-field' },
-                el('label', { class: 'fa-field-label', text: '逐字稿（必填）' }), transcript,
+                el('div', { class: 'fa-field-head' },
+                    el('label', { class: 'fa-field-label', text: '逐字稿（必填）' }), asrBtn),
+                transcript, asrInfo,
                 hint('必须和音频内容完全一致，包括标点。不一致会明显降低克隆音质——这是 Fish 的要求，不是本插件的限制。')),
             el('div', { class: 'fa-actions' },
                 button('保存到音色库', async () => {

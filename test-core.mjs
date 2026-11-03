@@ -2,6 +2,7 @@
 //   node test-core.mjs
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { audioFormat, mimeFor, languageHints, asrEndpoint, asrRequest, asrText, asrErrorText, transcribeAudio, describePrompt, cleanDescription, needsDescription, chatRequest, chatText, audioRejection, fillQueue, ASR_MODEL, ASR_HOST, DESCRIBE_EXAMPLE } from './ai-voice.mjs';
 import { normalizeVoiceConfig, resolveVoice, voiceFor, VOICE_LANGUAGES, blocks, segmentFromBlock, findVoiceByToken, matchSpeakerVoice, buildRosterSection, replaceRosterBlock, ROSTER_MARKERS } from './core.mjs';
 import { normalizeLanguage, normalizeLanguages, normalizeVoiceEntry, mergeVoiceEntries, mergeSyncedLibrary, voiceLibraryRequest, voiceSearchRequest, searchVoices, fetchVoiceLibrary } from './voice-library.mjs';
 import { nextLanguage, clampPosition, LANG_LABEL, LANG_NAME, defaultPosition, MAIN_SIZE } from './quick-dock.mjs';
@@ -791,4 +792,134 @@ t('悬浮球默认停在右下角且不出屏', () => {
     assert.ok(tiny.x >= 10 && tiny.y >= 10);
 });
 
+// ---- 1.7.0 AI 音色描述与逐字稿 ----
+console.log('— ai-voice: 逐字稿 —');
+t('音频格式从 MIME 或扩展名推出，未知时退回 mp3', () => {
+    assert.equal(audioFormat('audio/wav'), 'wav');
+    assert.equal(audioFormat('audio/mpeg'), 'mp3');
+    assert.equal(audioFormat('', 'clip.flac'), 'flac');
+    assert.equal(audioFormat('application/octet-stream', 'a.M4A'), 'mp4');
+    assert.equal(audioFormat('mystery/thing'), 'mp3');
+    assert.equal(mimeFor('wav'), 'audio/wav');
+    assert.equal(mimeFor('nope'), 'audio/mpeg');
+});
+t('逐字稿语言提示：通用不发提示，未知归中文', () => {
+    assert.deepEqual(languageHints(''), []);
+    assert.deepEqual(languageHints('zh'), ['zh']);
+    assert.deepEqual(languageHints('ja'), ['ja']);
+    assert.deepEqual(languageHints('orig'), ['zh']);
+    assert.deepEqual(languageHints('xx'), ['zh']);
+});
+t('ASR 接口地址拼接：裸域名和带协议都行', () => {
+    assert.equal(asrEndpoint('llm-x.cn-beijing.maas.aliyuncs.com'),
+        'https://llm-x.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation');
+    assert.equal(asrEndpoint('https://llm-x.example.com/'), asrEndpoint('llm-x.example.com'));
+    assert.equal(asrEndpoint(''), 'https://' + ASR_HOST + '/api/v1/services/aigc/multimodal-generation/generation');
+});
+t('ASR 请求体带 input_audio data URL 与 language_hints', () => {
+    const request = asrRequest({ base64: 'AAA', mime: 'audio/wav', language: 'ja', host: 'h.example.com' });
+    assert.equal(request.options.method, 'POST');
+    assert.equal(request.url, 'https://h.example.com/api/v1/services/aigc/multimodal-generation/generation');
+    const body = JSON.parse(request.options.body);
+    assert.equal(body.model, ASR_MODEL);
+    assert.equal(body.input.messages[0].content[0].type, 'input_audio');
+    assert.equal(body.input.messages[0].content[0].input_audio.data, 'data:audio/wav;base64,AAA');
+    assert.equal(body.parameters.format, 'wav');
+    assert.deepEqual(body.parameters.language_hints, ['ja']);
+    assert.equal(body.parameters.vocabulary, undefined);
+});
+t('ASR 请求：空音频直接报错，空语言不带语言提示', () => {
+    assert.throws(() => asrRequest({ base64: '' }), /参考音频/);
+    const body = JSON.parse(asrRequest({ base64: 'AAA', language: '' }).options.body);
+    assert.equal(body.parameters.language_hints, undefined);
+});
+t('ASR 响应取文字，各种套壳都能读到', () => {
+    assert.equal(asrText({ output: { text: ' 你好 ' } }), '你好');
+    assert.equal(asrText({ output: { output: { text: '二层' } } }), '二层');
+    assert.equal(asrText({ output: { sentence: { text: '句子' } } }), '句子');
+    assert.equal(asrText({}), '');
+});
+t('ASR 报错按状态码和错误码给出可操作提示', () => {
+    assert.match(asrErrorText(401, { code: 'InvalidApiKey' }), /密钥无效/);
+    assert.match(asrErrorText(429, {}), /超额|太频繁/);
+    assert.match(asrErrorText(404, { message: 'url error, please check url！' }), /接口地址或模型名/);
+    assert.match(asrErrorText(500, { message: 'boom' }), /HTTP 500/);
+});
+await (async () => {
+    await assert.rejects(transcribeAudio(new Blob([new Uint8Array(4)]), {}), /百炼 ASR 密钥/);
+    await assert.rejects(transcribeAudio(new Blob([]), { apiKey: 'k' }), /空/);
+    a('transcribeAudio：没密钥、空音频在发请求前拦住', () => {});
+})();
+await (async () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'audio/mpeg' });
+    const calls = [];
+    const fakeOk = async (url, options) => {
+        calls.push({ url, options });
+        return { ok: true, status: 200, json: async () => ({ output: { text: '识别结果' } }) };
+    };
+    const result = await transcribeAudio(blob, { apiKey: 'k', language: 'zh', fetcher: fakeOk });
+    assert.equal(result.text, '识别结果');
+    assert.equal(calls[0].options.headers.Authorization, 'Bearer k');
+    assert.ok(calls[0].url.includes('/services/aigc/multimodal-generation/generation'));
+    const fakeBad = async () => ({ ok: false, status: 401, json: async () => ({ code: 'InvalidApiKey', message: 'no' }) });
+    await assert.rejects(transcribeAudio(blob, { apiKey: 'k', fetcher: fakeBad }), /密钥无效/);
+    a('transcribeAudio：成功取文字，失败抛可读错误', () => {});
+})();
+
+console.log('— ai-voice: 音色描述 —');
+t('描述提示词里带上四问和示例，且要求只输出一段话', () => {
+    const prompt = describePrompt({ name: '黑天鹅', group: '崩坏：星穹铁道', guide: '' });
+    assert.ok(prompt.includes('黑天鹅'));
+    assert.ok(prompt.includes('崩坏：星穹铁道'));
+    assert.ok(prompt.includes('哪一部作品'));
+    assert.ok(prompt.includes('哪一个人物'));
+    assert.ok(prompt.includes('适用的模式'));
+    assert.ok(prompt.includes('听感如何'));
+    assert.ok(prompt.includes(DESCRIBE_EXAMPLE));
+    assert.ok(prompt.includes('只输出一段中文描述'));
+    assert.ok(describePrompt({}).includes('未分组'));
+});
+t('模型输出清洗：去掉引号、标签尾巴和多余换行', () => {
+    assert.equal(cleanDescription('“本音色属于X。”'), '本音色属于X。');
+    assert.equal(cleanDescription('音色描述：本音色属于X<|im_end|>'), '本音色属于X');
+    assert.equal(cleanDescription('  本音色\n属于X  '), '本音色属于X');
+    assert.equal(cleanDescription(''), '');
+    assert.equal(cleanDescription(null), '');
+});
+t('空描述才算需要生成，已有描述一律不动', () => {
+    assert.equal(needsDescription({ guide: '' }), true);
+    assert.equal(needsDescription({ guide: '   ' }), true);
+    assert.equal(needsDescription({}), true);
+    assert.equal(needsDescription({ guide: '写好的' }), false);
+    assert.equal(needsDescription(null), false);
+});
+t('批量补充只挑空描述的条目', () => {
+    const list = [{ id: 'a', guide: '' }, { id: 'b', guide: '有' }, { id: 'c' }];
+    assert.equal(fillQueue(list).map(e => e.id).join(','), 'a,c');
+    assert.equal(fillQueue(list, { overwrite: true }).length, 3);
+    assert.equal(fillQueue(null).length, 0);
+});
+t('聊天请求走酒馆自己的转发端点，不带密钥', () => {
+    assert.throws(() => chatRequest({ messages: [], source: 'openai' }), /没有内容/);
+    assert.throws(() => chatRequest({ messages: [{ role: 'user', content: 'x' }], source: '' }), /聊天补全来源/);
+    const request = chatRequest({ messages: [{ role: 'user', content: 'x' }], model: 'm', source: 'openai' });
+    assert.equal(request.url, '/api/backends/chat-completions/generate');
+    const body = JSON.parse(request.options.body);
+    assert.equal(body.chat_completion_source, 'openai');
+    assert.equal(body.model, 'm');
+    assert.equal(body.messages[0].content, 'x');
+    assert.ok(!JSON.stringify(body).includes('Authorization'));
+});
+t('聊天响应取文字，字符串和数组都认', () => {
+    assert.equal(chatText({ choices: [{ message: { content: '一段描述' } }] }), '一段描述');
+    assert.equal(chatText({ choices: [{ message: { content: [{ text: 'a' }, { type: 'text', text: 'b' }] } }] }), 'ab');
+    assert.equal(chatText({ output: { text: 'c' } }), 'c');
+    assert.equal(chatText({}), '');
+});
+t('音频被后端拒绝时能识别出来', () => {
+    assert.equal(audioRejection(413, ''), true);
+    assert.equal(audioRejection(400, 'audio is not supported'), true);
+    assert.equal(audioRejection(400, '当前模型不支持多模态'), true);
+    assert.equal(audioRejection(500, 'internal'), false);
+});
 console.log('\n全部通过：' + pass + ' 项');

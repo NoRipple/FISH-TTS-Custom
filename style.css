@@ -342,3 +342,30 @@
 #fa-voice-dialog .fa-settings #fa-logs { max-height: 200px; overflow: auto; font-family: var(--fa-mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; background: var(--fa-raised); border-radius: 3px; padding: 8px; margin: 0; }
 #fa-voice-dialog .fa-settings progress { width: 100%; height: 6px; }
 #fa-voice-dialog .fa-settings .fa-statusbar { position: sticky; top: 0; z-index: 2; background: var(--fa-paper); padding: 6px 0; }
+
+/* ---- 1.7.0 音色描述与逐字稿 ---- */
+#fa-voice-dialog .fa-vrow-error,
+#fa-voice-dialog .fa-group .fa-vrow-error {
+    font-size: 0.78em;
+    line-height: 1.4;
+    color: #c0392b;
+    padding: 2px 0 4px 26px;
+    border-bottom: 1px solid var(--fa-hairline, #ffffff1f);
+}
+:root[data-theme-mode="dark"] #fa-voice-dialog .fa-vrow-error { color: #ff8a7a; }
+#fa-voice-dialog .fa-field-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+#fa-voice-dialog .fa-field-head .fa-field-label { margin: 0; }
+#fa-voice-dialog .fa-asr-info {
+    display: block;
+    min-height: 1.2em;
+    margin-top: 4px;
+    opacity: 0.85;
+}
+#fa-voice-dialog .fa-asr-info[data-bad="1"] { color: #c0392b; opacity: 1; }
+:root[data-theme-mode="dark"] #fa-voice-dialog .fa-asr-info[data-bad="1"] { color: #ff8a7a; }
+#fa-voice-dialog .fa-group-actions .fa-menu_button[disabled] { opacity: 0.5; }

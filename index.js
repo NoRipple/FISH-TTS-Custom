@@ -11,6 +11,7 @@ import { installVoicePanel } from './voice-panel.mjs';
 import { installDock } from './quick-dock.mjs';
 import { assignGroup } from './voice-groups.mjs';
 import { DEFAULT_GROUP_NAMES, defaultGroupFor } from './voice-presets.mjs';
+import { transcribeAudio, describeVoice, audioFormat } from './ai-voice.mjs';
 
 const ctx = () => SillyTavern.getContext();
 const KEY = 'fish_dialogue_v1';
@@ -39,7 +40,7 @@ export function renderSettingsMarkup(host) {
 }
 
 export const SETTINGS_MARKUP = `
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.6.3</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.7.0</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -103,6 +104,17 @@ export const SETTINGS_MARKUP = `
 <button id="fa-key-save">保存API KEY</button><small class="fa-hint">保存到账户设置；留空保存可清除。账户设置备份可能包含此密钥。</small>
 <label>语音引擎<input id="fa-model" class="text_pole" type="text" placeholder="s2.1-pro-free"></label>
 <small class="fa-hint">需启用酒馆 enableCorsProxy 并重启；用试听验证连接。</small>
+<div class="fa-sub"><div class="fa-subhead">音色描述（用酒馆默认模型）</div>
+<small class="fa-hint">「✨ 生成描述」和「一键补充」直接用酒馆当前选中的聊天补全来源、Base URL 和密钥，插件不保存这些凭据。当前来源会在点击时读取，换模型后立刻生效。</small>
+<div id="fa-model-hint" class="fa-row"><small class="fa-hint">当前来源：读取中…</small></div>
+</div>
+<div class="fa-sub"><div class="fa-subhead">逐字稿识别（阿里百炼）</div>
+<label>百炼中转地址<input id="fa-asr-host" class="text_pole" type="text" placeholder="llm-xxxx.cn-beijing.maas.aliyuncs.com"></label>
+<label>识别模型<input id="fa-asr-model" class="text_pole" type="text" placeholder="qwen-audio-3.1-asr-flash"></label>
+<label>百炼 API Key<input id="fa-asr-key" class="text_pole" type="password" autocomplete="off"></label>
+<button id="fa-asr-key-save">保存 ASR 密钥</button>
+<small class="fa-hint">模型名要写 qwen-audio-3.1-asr-flash；控制台示例里的 -message 后缀会报 url error。密钥只保存在账户设置里，账户备份可能包含它。密钥无效或额度用尽时会返回对应提示，不会静默失败。</small>
+</div>
 </details>
 <details class="fa-sec"><summary><i class="fa-solid fa-screwdriver-wrench"></i><span>高级 · 维护</span></summary>
 <div class="fa-row"><button id="fa-log-export">导出日志</button><button id="fa-log-clear" class="fa-btn-danger">清空日志</button></div>
@@ -351,7 +363,24 @@ function renderVoiceRows(rows) { $('voices')?.replaceChildren(); for (const row 
 function refreshAll() {
     const rows = collectVoiceRows();
     renderVoiceLibrary(); renderDefaultVoiceSelects(); renderVoiceRows(rows);
+    renderModelHint();
     voicePanel?.refresh();
+}
+// Which chat backend the description buttons will use. Re-read on every rebuild
+// because the user can switch model inside SillyTavern at any time; showing the
+// answer up front beats a confusing failure after the click.
+function renderModelHint() {
+    const node = $('model-hint');
+    if (!node) return;
+    const source = ctx();
+    const name = source.chatCompletionSettings?.chat_completion_source || '';
+    const model = source.model || '';
+    const small = document.createElement('small');
+    small.className = 'fa-hint';
+    small.textContent = (name || model)
+        ? `当前来源：${name || '（未设置）'} · 模型 ${model || '（跟随来源默认）'}`
+        : '还没有选择聊天补全来源，生成描述会失败；请先在酒馆的 API 设置里选一个支持多模态的模型。';
+    node.replaceChildren(small);
 }
 // Declared with var on purpose: mountWandMenu() and installDock() run during module
 // evaluation, long before this line. `let` would leave the binding in its temporal
@@ -367,6 +396,9 @@ voicePanel = installVoicePanel({
     preview: entry => playPreview(entry),
     search: ({ title }) => searchVoices({ baseUrl: settings.baseUrl, apiKey, title }),
     addClone,
+    transcribe: ({ file, language }) => transcribeRefAudio({ file, language }),
+    describe: args => describeVoice({ ...args, log }),
+    previewAudio: entry => previewAudioBlob(entry),
     removeRef: id => refStore.delete(id),
     renameRef: (fromId, toId) => refStore.renameRef(fromId, toId),
     syncRoster: () => syncRosterToBook(),
@@ -397,6 +429,37 @@ function playPreview(entry) {
     queue.stop();
     queue.enqueue([voicePreview({ voice: entry.id, language, settings })]);
 }
+// The clone tab's transcript button. Only the transport lives here; the request
+// shape and every error message come from ai-voice.mjs.
+async function transcribeRefAudio({ file, language }) {
+    if (!file) throw new Error('请先选择参考音频文件');
+    const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'audio/mpeg' });
+    const result = await transcribeAudio(blob, {
+        apiKey: settings.asrKey || '',
+        language: language || '',
+        host: settings.asrHost || DEFAULTS.asrHost,
+        model: settings.asrModel || DEFAULTS.asrModel,
+    });
+    // Unchecked on purpose: speech recognition mishears names and punctuation, and
+    // a Fish clone with the wrong transcript sounds noticeably worse. The text goes
+    // into the editable box, never straight into a saved clone.
+    return result.text;
+}
+
+// Preview audio for the description prompt, as base64 (what the chat backends
+// accept). Follows the same path as the 试听 button so the clip is the one the
+// user would actually hear, and the cache makes repeat calls free.
+async function previewAudioBlob(entry) {
+    const language = entry.languages?.[0] || (settings.language === 'orig' ? 'zh' : settings.language);
+    const input = voicePreview({ voice: entry.id, language, settings });
+    const blob = await synthesizeBrowser(input, apiKey, browserStore, undefined, () => {}, fetch, loadRefAudio);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    return { base64: btoa(binary), format: audioFormat(blob.type || '', '') };
+}
+
 async function addClone({ file, name, language, transcript }) {
     if (!file) throw new Error('请先选择参考音频文件');
     const meta = normalizeRefAudio({ name, transcript, language, bytes: file.size, type: file.type });
@@ -638,6 +701,12 @@ if (typeof settings.model !== 'string' || !settings.model.trim()) { settings.mod
 bind('base', 'baseUrl'); bind('model', 'model'); bind('book', 'book');
 $('language').value = settings.language;
 $('key').value=apiKey;
+$('asr-host').value=settings.asrHost || DEFAULTS.asrHost;
+$('asr-model').value=settings.asrModel || DEFAULTS.asrModel;
+$('asr-key').value=settings.asrKey || '';
+bind('asr-host','asrHost'); bind('asr-model','asrModel');
+$('asr-key').addEventListener('input', () => { settings.asrKey = $('asr-key').value.trim(); });
+click('asr-key-save',()=>{settings.asrKey=$('asr-key').value.trim();save();log('INFO',settings.asrKey?'百炼 ASR 密钥已保存':'已清除百炼 ASR 密钥');});
 $('key').addEventListener('input', () => { stopAll(); apiKey = $('key').value.trim(); });
 click('key-save',()=>{settings.savedApiKey=apiKey;save();log('INFO',apiKey?'API Key 已保存到账户设置':'已清除保存的 API Key');});
 click('add-regex',async()=>{await installPromptRegex(ctx());log('INFO','已添加 Talk-Emo 提示词过滤正则；立即生效，刷新后可在酒馆正则列表查看。');$('status').textContent='已添加正则：音声段不再发送给 LLM，聊天原文和播放保留';});
@@ -801,4 +870,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.6.3 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.7.0 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
