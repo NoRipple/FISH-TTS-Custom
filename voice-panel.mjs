@@ -13,6 +13,9 @@ export function installVoicePanel(deps) {
         preview, search, addClone, removeRef, clearRefs, refUsage,
     } = deps;
     let dialog = null, tab = 'library', selection = new Set(), results = [], lastQuery = '';
+    // Collapsed groups survive a re-render, so ticking a voice does not spring a
+    // group the user folded away back open.
+    const collapsed = new Set();
 
     function groups() { return collectGroupNames(library(), Array.isArray(settings.voiceGroups) ? settings.voiceGroups : []); }
     function persistGroups(next) { settings.voiceGroups = next; save(); }
@@ -64,7 +67,7 @@ export function installVoicePanel(deps) {
         const list = library();
         const names = collectGroupNames(list, settings.voiceGroups || []);
         const { buckets, loose } = groupEntries(list, names);
-        host.append(hint('勾选后可批量移动到某个组或批量启用/禁用。删除组只把成员移到未分组，不会删除音色。'));
+        host.append(hint('勾选后可批量移动到某个组或批量启用/禁用。点组名可以折叠/展开。删除组只把成员移到未分组，不会删除音色。'));
         const bulk = el('div', { class: 'fa-row fa-bulk' },
             button('全选本页', () => { selection = new Set(list.filter(Boolean).map(e => e.id)); render(); }),
             button('清空勾选', () => { selection = new Set(); render(); }),
@@ -83,8 +86,16 @@ export function installVoicePanel(deps) {
         for (const bucket of buckets) {
             const section = el('div', { class: 'fa-group' });
             const ids = bucket.entries.map(e => e.id);
+            const folded = collapsed.has(bucket.name);
+            if (folded) section.classList.add('fa-group-folded');
+            const toggle = el('button', { class: 'fa-group-toggle', type: 'button', title: folded ? '展开这个组' : '折叠这个组', text: folded ? '▸' : '▾' });
+            toggle.addEventListener('click', () => {
+                if (collapsed.has(bucket.name)) collapsed.delete(bucket.name); else collapsed.add(bucket.name);
+                render();
+            });
             const head = el('div', { class: 'fa-group-head' },
-                el('b', { text: bucket.name }),
+                toggle,
+                el('b', { class: 'fa-group-name', text: bucket.name, title: '点击折叠/展开', onclick: () => { toggle.click(); } }),
                 el('small', { class: 'fa-group-count', text: `${bucket.entries.filter(e => e.active !== false).length}/${bucket.entries.length}` }),
                 button('全选', () => { for (const id of ids) selection.add(id); render(); }),
                 button('全部启用', () => { toggleAll(list, ids, 'enable'); setLibrary(list); refresh(); render(); }),
@@ -104,16 +115,26 @@ export function installVoicePanel(deps) {
                     log('INFO', `已删除组「${bucket.name}」，${result.moved} 条音色移至未分组`);
                 }, 'fa-btn-danger'));
             section.append(head);
+            if (folded) { host.append(section); continue; }
             if (!bucket.entries.length) section.append(el('div', { class: 'fa-empty', text: '这个组还没有音色。可以从“搜索音色”添加，或勾选已有音色后移动过来。' }));
             for (const entry of bucket.entries) section.append(entryRow(entry, list));
             host.append(section);
         }
 
-        const looseSection = el('div', { class: 'fa-group' },
-            el('div', { class: 'fa-group-head' }, el('b', { text: UNGROUPED }),
-                el('small', { class: 'fa-group-count', text: String(loose.length) })));
-        for (const entry of loose) looseSection.append(entryRow(entry, list));
-        if (!loose.length) looseSection.append(el('div', { class: 'fa-empty', text: '没有未分组的音色。' }));
+        const looseFolded = collapsed.has(UNGROUPED);
+        const looseSection = el('div', { class: 'fa-group' + (looseFolded ? ' fa-group-folded' : '') });
+        const looseToggle = el('button', { class: 'fa-group-toggle', type: 'button', title: looseFolded ? '展开这个组' : '折叠这个组', text: looseFolded ? '▸' : '▾' });
+        looseToggle.addEventListener('click', () => {
+            if (collapsed.has(UNGROUPED)) collapsed.delete(UNGROUPED); else collapsed.add(UNGROUPED);
+            render();
+        });
+        looseSection.append(el('div', { class: 'fa-group-head' }, looseToggle,
+            el('b', { class: 'fa-group-name', text: UNGROUPED, title: '点击折叠/展开', onclick: () => { looseToggle.click(); } }),
+            el('small', { class: 'fa-group-count', text: String(loose.length) })));
+        if (!looseFolded) {
+            for (const entry of loose) looseSection.append(entryRow(entry, list));
+            if (!loose.length) looseSection.append(el('div', { class: 'fa-empty', text: '没有未分组的音色。' }));
+        }
         host.append(looseSection);
 
         const adder = el('div', { class: 'fa-row' },
@@ -224,26 +245,36 @@ export function installVoicePanel(deps) {
 
     function renderClone(host) {
         host.append(hint('一次性克隆：上传一段 10–30 秒的参考音频并填写逐字稿。参照 Fish 的 one-shot 模式，服务器不保存任何东西，每次合成都会随请求重新上传这段音频。'));
-        const file = el('input', { type: 'file', accept: 'audio/*', id: 'fa-clone-file' });
+        // The native file input is kept for its file picker but hidden by CSS: on a
+        // dark theme an unstyled <input type=file> shows only the browser's default
+        // grey text, which reads as "there is no way to pick a file".
+        const file = el('input', { type: 'file', accept: 'audio/*', id: 'fa-clone-file', class: 'fa-file-input' });
         const name = el('input', { class: 'text_pole', id: 'fa-clone-name', placeholder: '名称（例如 丹恒）' });
         const language = el('select', { class: 'text_pole', id: 'fa-clone-lang' },
             el('option', { value: '', text: '通用' }), el('option', { value: 'zh', text: '中文' }),
             el('option', { value: 'ja', text: '日语' }), el('option', { value: 'en', text: '英语' }));
         const transcript = el('textarea', { class: 'text_pole', id: 'fa-clone-transcript', rows: '3', placeholder: '逐字稿：参考音频里说的原话，必须一字不差（含标点）' });
-        const info = el('small', { class: 'fa-hint', id: 'fa-clone-info', text: '尚未选择文件' });
+        const info = el('span', { class: 'fa-file-name', id: 'fa-clone-info', text: '尚未选择文件' });
+        const pick = button('选择音频文件', () => file.click());
         file.addEventListener('change', () => {
             const picked = file.files?.[0];
             info.textContent = picked ? `${picked.name} · ${formatBytes(picked.size)}` : '尚未选择文件';
+            info.classList.toggle('fa-file-picked', Boolean(picked));
         });
-        host.append(el('label', { text: '参考音频文件' }), file, info);
-        host.append(el('label', { text: '名称' }), name);
-        host.append(el('label', { text: '语言' }), language);
-        host.append(el('label', { text: '逐字稿（必填）' }), transcript);
+        host.append(el('div', { class: 'fa-field' },
+            el('label', { class: 'fa-field-label', text: '参考音频文件' }),
+            el('div', { class: 'fa-file-row' }, file, pick, info)));
+        host.append(el('div', { class: 'fa-field' },
+            el('label', { class: 'fa-field-label', text: '名称' }), name));
+        host.append(el('div', { class: 'fa-field' },
+            el('label', { class: 'fa-field-label', text: '语言' }), language));
+        host.append(el('div', { class: 'fa-field' },
+            el('label', { class: 'fa-field-label', text: '逐字稿（必填）' }), transcript));
         host.append(hint('逐字稿必须和音频内容完全一致，包括标点。不一致会明显降低克隆音质——这是 Fish 的要求，不是本插件的限制。'));
         host.append(el('div', { class: 'fa-row' },
             button('保存到音色库', async () => {
                 const picked = file.files?.[0];
-                try { await addClone({ file: picked, name: name.value, language: language.value, transcript: transcript.value }); file.value = ''; transcript.value = ''; name.value = ''; info.textContent = '尚未选择文件'; render(); }
+                try { await addClone({ file: picked, name: name.value, language: language.value, transcript: transcript.value }); file.value = ''; transcript.value = ''; name.value = ''; info.textContent = '尚未选择文件'; info.classList.remove('fa-file-picked'); render(); }
                 catch (e) { log('ERROR', e.message); }
             })));
         const usageHost = el('div', { class: 'fa-row', id: 'fa-ref-usage' });

@@ -10,6 +10,7 @@ import { SynthesisQueue, clampConcurrency, DEFAULT_CONCURRENCY, MAX_CONCURRENCY 
 import { synthesizeBrowser, parseRetryAfter, MAX_RETRIES, MAX_RETRY_DELAY_MS } from './browser-audio.mjs';
 import { lineText, displayText, patchTalkDom } from './inline.mjs';
 import { DEFAULTS } from './core.mjs';
+import { DEFAULT_GROUP_NAMES, DEFAULT_VOICE_GROUPS, defaultGroupFor } from './voice-presets.mjs';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok  ' + name); };
@@ -652,6 +653,51 @@ t('组被删除后内置音色仍留在未分组，不会无限复活成组', ()
     // fileRosterIntoGroup bails out when the group is not declared any more.
     assert.equal(declared.includes('偶像大师·闪耀色彩'), false);
     assert.equal(list[0].group, '');
+});
+
+
+// --- 1.5.5 内置作品分组 ---
+t('内置分组表覆盖全部 15 个作品组且组名不重复', () => {
+    assert.equal(DEFAULT_GROUP_NAMES.length, DEFAULT_VOICE_GROUPS.length);
+    assert.equal(new Set(DEFAULT_GROUP_NAMES).size, DEFAULT_GROUP_NAMES.length);
+    for (const item of DEFAULT_VOICE_GROUPS) assert.ok(DEFAULT_GROUP_NAMES.includes(item.group));
+});
+t('每个内置音色 id 只属于一个组', () => {
+    const all = DEFAULT_VOICE_GROUPS.flatMap(item => item.ids);
+    assert.equal(new Set(all).size, all.length);
+    assert.equal(all.length, 62);
+});
+t('defaultGroupFor 能按 id 找到作品，未知 id 返回空串', () => {
+    assert.equal(defaultGroupFor('a1150f3d14ac46fb8ea59c7803cd8357'), '偶像大师·闪耀色彩');
+    assert.equal(defaultGroupFor('f83297334ee44cdba67d1c49827fd9db'), '崩坏：星穹铁道');
+    assert.equal(defaultGroupFor('nope'), '');
+});
+t('启动时只给仍未分组的音色归类，用户手动归组不会被覆盖', () => {
+    // Mirrors filePresetGroups(): skip anything that already has a group, and skip
+    // groups the user has deleted.
+    const known = new Set(['偶像大师·闪耀色彩', '崩坏：星穹铁道']);
+    const library = [
+        { id: 'a1150f3d14ac46fb8ea59c7803cd8357', group: '' },
+        { id: 'f83297334ee44cdba67d1c49827fd9db', group: '我的自定义组' },
+        { id: 'ccfce7160c664853813988cea175d1ab' },
+    ];
+    let moved = 0;
+    for (const entry of library) {
+        if (!entry || entry.group) continue;
+        const group = defaultGroupFor(entry.id);
+        if (group && known.has(group) && assignGroup(library, [entry.id], group)) moved++;
+    }
+    assert.equal(moved, 2);
+    assert.equal(library[0].group, '偶像大师·闪耀色彩');
+    assert.equal(library[1].group, '我的自定义组');
+    assert.equal(library[2].group, '偶像大师·闪耀色彩');
+});
+t('用户删掉的作品组不会在下次启动时复活成员', () => {
+    const known = new Set(['崩坏：星穹铁道']);
+    const entry = { id: 'a1150f3d14ac46fb8ea59c7803cd8357', group: '' };
+    const group = defaultGroupFor(entry.id);
+    if (group && known.has(group)) entry.group = group;
+    assert.equal(entry.group, '');
 });
 
 console.log('\n全部通过：' + pass + ' 项');

@@ -9,6 +9,7 @@ import { fetchVoiceLibrary, mergeSyncedLibrary, normalizeVoiceEntry } from './vo
 import { RefAudioStore, normalizeRefAudio, formatBytes, pruneRefAudio } from './ref-audio.mjs';
 import { installVoicePanel } from './voice-panel.mjs';
 import { assignGroup } from './voice-groups.mjs';
+import { DEFAULT_GROUP_NAMES, defaultGroupFor } from './voice-presets.mjs';
 
 const ctx = () => SillyTavern.getContext();
 const KEY = 'fish_dialogue_v1';
@@ -32,7 +33,7 @@ let inline, libraryEntries = [];
 const root = document.createElement('section'); root.id = 'fish-dialogue';
 root.innerHTML = `
 <div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header" role="button" tabindex="0"><b>Fish 对话音声</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.5.4</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.5.5</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -461,22 +462,25 @@ click('preview-default', () => {
 renderVoiceLibrary(); renderDefaultVoiceSelects();
 renderVoiceRows(Object.entries(settings.voices).map(([name, config]) => ({ name, langs: normalizeVoiceConfig(config) })));
 refreshAll();
-// Two groups ship with the plugin so the roster lands somewhere sensible and the
-// empty HSR group is ready for search results. They are only defaults: deleting
-// them is a normal user action and must not be undone on the next load.
-const DEFAULT_GROUPS = ['偶像大师·闪耀色彩', '崩坏：星穹铁道'];
+// A full set of work groups ships with the plugin so the built-in voices are
+// filed by franchise out of the box. They are only defaults: renaming, merging
+// and deleting them are ordinary user actions and are never undone on reload.
 if (!Array.isArray(settings.voiceGroups) || !settings.voiceGroups.length) {
-    settings.voiceGroups = DEFAULT_GROUPS.slice(); save();
+    settings.voiceGroups = DEFAULT_GROUP_NAMES.slice(); save();
 }
-// Built-in roster entries are filed under the idol group on every start, not just
-// after the first import: a library imported by an older version has the same
-// entries but no group yet, and the import flag would otherwise freeze them as
-// "未分组" forever. Anything the user already filed elsewhere is left alone.
-const ROSTER_GROUP = '偶像大师·闪耀色彩';
-async function fileRosterIntoGroup(roster) {
-    if (!(settings.voiceGroups || []).includes(ROSTER_GROUP)) return 0;
-    const rosterIds = roster.map(item => item.id);
-    const moved = assignGroup(voiceLibrary, rosterIds.filter(id => voiceLibrary.some(e => e.id === id && !e.group)), ROSTER_GROUP);
+// Shipped voices are re-filed on every start, not only on first import: a library
+// imported by an older version has the same entries but no group yet, and the
+// import flag would otherwise freeze them as "未分组" forever. Only entries that
+// are still group-less are touched, so a voice the user filed elsewhere stays put,
+// and a default group the user deleted is not resurrected for its members.
+function filePresetGroups() {
+    let moved = 0;
+    const known = new Set(settings.voiceGroups || []);
+    for (const entry of voiceLibrary) {
+        if (!entry || entry.group) continue;
+        const group = defaultGroupFor(entry.id);
+        if (group && known.has(group) && assignGroup(voiceLibrary, [entry.id], group)) moved++;
+    }
     if (moved) { settings.voiceLibrary = voiceLibrary; save(); }
     return moved;
 }
@@ -488,8 +492,8 @@ async function fileRosterIntoGroup(roster) {
             settings.rosterImported = 2; save();
             log('INFO', `已自动导入内置音色 ${added} 个`);
         }
-        const moved = await fileRosterIntoGroup(roster);
-        if (moved) log('INFO', `已把 ${moved} 个内置音色归入「${ROSTER_GROUP}」`);
+        const moved = filePresetGroups();
+        if (moved) log('INFO', `已按作品把 ${moved} 个内置音色归入分组`);
     } catch (e) { log('WARN', '内置音色自动导入失败：' + e.message); }
     await applyVoiceGuides();
     refreshAll();
@@ -709,4 +713,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.5.4 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.5.5 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
