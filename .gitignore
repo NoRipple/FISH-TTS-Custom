@@ -3,3 +3,6 @@ _*.json
 _*.py
 _*.tsv
 _*.html
+
+# 服务端插件的依赖包（体积大，安装时 npm install 生成）
+server-plugin/fish-voice-server/node_modules/

@@ -59,17 +59,28 @@ export function ttsRequest(input, apiKey, refAudio = null) {
     const model=input.model?.trim() || 's2.1-pro-free';
     if(/[\r\n]/.test(model)) throw Error('模型名称无效');
     if(base.hostname==='api.fish.audio' && !['s2.1-pro-free','s2.1-pro','s2-pro','s1','drama-3-preview'].includes(model)) throw Error('未知官方模型，请确认模型名称');
-    const url='/proxy/'+new URL('v1/tts',base).href;
+    const directUrl=new URL('v1/tts',base).href;
+    const url='/proxy/'+directUrl;
     if(refAudio){
         if(!refAudio.transcript?.trim()) throw Error('一次性克隆缺少逐字稿');
         if(!refAudio.bytes?.length) throw Error('一次性克隆缺少参考音频字节');
-        const body=msgpackMap({
+        // Inline references are MessagePack-only, and MessagePack cannot survive
+        // either the browser (no CORS from api.fish.audio) or SillyTavern's /proxy/
+        // (it JSON.stringify's the parsed body). The bundled server plugin runs on
+        // the SillyTavern Node process, where the official SDK handles the encoding.
+        const body=JSON.stringify({
+            apiKey:apiKey.trim(),
+            baseUrl:base.href.replace(/\/+$/,''),
+            model,
             text:input.text,
             format:'mp3',
-            latency:'normal',
-            references:[{audio:refAudio.bytes,text:String(refAudio.transcript).trim()}],
+            transcript:String(refAudio.transcript).trim(),
+            mime:refAudio.type || 'audio/wav',
+            filename:refAudio.filename || 'reference.wav',
+            audio:refAudio.base64,
         });
-        return {url,baseUrl:base.href,model,options:{method:'POST',headers:{Authorization:'Bearer '+apiKey.trim(),model,'Content-Type':'application/msgpack'},body}};
+        return {url:'/api/plugins/fish-voice-server/clone',baseUrl:base.href,model,clone:true,
+            options:{method:'POST',headers:{...(refAudio.headers||{}),'Content-Type':'application/json'},body}};
     }
     return {url,baseUrl:base.href,model,
         options:{method:'POST',headers:{Authorization:'Bearer '+apiKey.trim(),model,'Content-Type':'application/json'},body:JSON.stringify({text:input.text,reference_id:input.voice.trim(),format:'mp3',latency:'normal'})}};
@@ -149,6 +160,23 @@ export function parseRetryAfter(value, now = Date.now()) {
     return null;
 }
 
+// The server plugin answers failures as { error } so the real Fish message
+// reaches the user instead of a bare HTTP status.
+async function cloneAwareError(response, request) {
+    if (request?.clone) {
+        let message = '';
+        try {
+            const body = await response.json();
+            message = String(body?.error || body?.message || '');
+        } catch { /* a non-JSON body falls back to the generic text below */ }
+        const error = Error(message || `音色服务端返回 HTTP ${response.status}`);
+        error.status = response.status;
+        error.retryable = false;
+        return error;
+    }
+    return httpError(response);
+}
+
 function httpError(response) {
     const status = response.status;
     if (status === 404) return Error('HTTP 404：请启用 enableCorsProxy: true 并重启酒馆；若已开启，请检查 Base URL 和 Fish 接口。');
@@ -179,7 +207,7 @@ async function fetchAudio(request, signal, update, fetcher) {
     try {
         signal?.throwIfAborted();update({status:'requesting'});
         const response=await fetcher(request.url,{...request.options,signal:controller.signal,redirect:'error'});
-        if(!response.ok)throw httpError(response);
+        if(!response.ok)throw await cloneAwareError(response, request);
         const type=response.headers.get('content-type') || '';
         // Some SillyTavern versions forward the body but omit upstream Content-Type.
         // Validate headerless/generic bodies by their file signature after reading.

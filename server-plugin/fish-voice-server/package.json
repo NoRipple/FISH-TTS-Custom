@@ -1,0 +1,11 @@
+{
+  "name": "fish-voice-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Server-side zero-shot cloning bridge for the Fish Dialogue SillyTavern extension.",
+  "main": "index.js",
+  "type": "commonjs",
+  "dependencies": {
+    "fish-audio": "^0.0.3"
+  }
+}

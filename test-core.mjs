@@ -960,26 +960,34 @@ t('音频被后端拒绝时能识别出来', () => {
     assert.equal(audioRejection(400, '当前模型不支持多模态'), true);
     assert.equal(audioRejection(500, 'internal'), false);
 });
-t('一次性克隆走 msgpack，音频字节原样放 references[0].audio', () => {
+t('一次性克隆改走酒馆服务端，携带 base64 音频与逐字稿', () => {
     const req = ttsRequest({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro', voice: 'x', text: '你好' }, 'key',
-        { bytes: new Uint8Array([0xff, 0xd8, 0xff]), transcript: ' 参考 ' });
-    assert.equal(req.options.headers['Content-Type'], 'application/msgpack');
-    const body = req.options.body;
-    assert.ok(body instanceof Uint8Array, '请求体应是二进制');
-    assert.equal(body[0], 0x84, '顶层 map 应有四个字段');
-    const raw = Buffer.from(body);
-    assert.ok(raw.includes(Buffer.from('format')) && raw.includes(Buffer.from('mp3')), '字段名齐全');
-    assert.ok(raw.includes(Buffer.from('参考', 'utf8')), '逐字稿原文进体');
-    assert.ok(raw.indexOf(Buffer.from([0xc4, 0x03, 0xff, 0xd8, 0xff])) > 0, '音频以 bin8 形式带原始字节');
+        { bytes: new Uint8Array([1, 2, 3]), base64: 'AQID', transcript: ' 参考 ', filename: 'a.wav', type: 'audio/wav' });
+    assert.equal(req.url, '/api/plugins/fish-voice-server/clone');
+    assert.equal(req.clone, true);
+    assert.equal(req.options.headers['Content-Type'], 'application/json');
+    const body = JSON.parse(req.options.body);
+    assert.equal(body.audio, 'AQID');
+    assert.equal(body.transcript, '参考');
+    assert.equal(body.text, '你好');
+    assert.equal(body.apiKey, 'key');
+    assert.equal(body.model, 's2.1-pro');
 });
-t('克隆缺逐字稿或缺音频字节要立刻报错', () => {
+t('克隆缺逐字稿或缺音频数据要立刻报错', () => {
     const base = { baseUrl: 'https://api.fish.audio', model: 's2.1-pro', voice: 'x', text: 'hi' };
     assert.throws(() => ttsRequest(base, 'k', { bytes: new Uint8Array([1]) }), /逐字稿/);
     assert.throws(() => ttsRequest(base, 'k', { transcript: 't' }), /音频字节/);
     assert.throws(() => ttsRequest(base, 'k', { bytes: new Uint8Array(0), transcript: 't' }), /音频字节/);
 });
-t('普通音色仍走 JSON，不受克隆分支影响', () => {
+t('克隆请求必须带上酒馆的 CSRF 头，否则服务端插件返回 403', () => {
+    const req = ttsRequest({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro', voice: 'x', text: 'hi' }, 'k',
+        { bytes: new Uint8Array([1]), base64: 'AQ==', transcript: 't', headers: { 'X-CSRF-Token': 'abc', 'Content-Type': 'application/json' } });
+    assert.equal(req.options.headers['X-CSRF-Token'], 'abc');
+    assert.equal(req.options.headers['Content-Type'], 'application/json');
+});
+t('普通音色仍走酒馆代理的 JSON，不受克隆分支影响', () => {
     const req = ttsRequest({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro', voice: 'abc', text: 'hi' }, 'k');
+    assert.equal(req.url, '/proxy/https://api.fish.audio/v1/tts');
     assert.equal(req.options.headers['Content-Type'], 'application/json');
     assert.equal(JSON.parse(req.options.body).reference_id, 'abc');
 });
