@@ -173,14 +173,17 @@ export function needsDescription(entry) {
 
 // The frontend never sees the key: it only tells the host which backend and which
 // endpoint to use. An empty customUrl means "the address the user configured".
-export function chatRequest({ messages, model, source = 'openai', reverseProxy = '', customUrl = '', maxTokens = 400 }) {
+export function chatRequest({ messages, model, source = 'openai', reverseProxy = '', customUrl = '', maxTokens = 400, headers = null }) {
     if (!Array.isArray(messages) || !messages.length) throw new Error('聊天请求没有内容');
     if (!source) throw new Error('还没有在酒馆里选择聊天补全来源，无法使用酒馆默认模型');
     const body = { chat_completion_source: source, messages, max_tokens: maxTokens };
     if (model) body.model = model;
     if (reverseProxy) body.reverse_proxy = reverseProxy;
     if (customUrl) body.custom_url = customUrl;
-    return { url: '/api/backends/chat-completions/generate', options: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } };
+    // The host rejects a bare POST with 403: it wants its own CSRF token, which only
+    // the page's getRequestHeaders() knows. The caller passes that in.
+    const requestHeaders = headers || { 'Content-Type': 'application/json' };
+    return { url: '/api/backends/chat-completions/generate', options: { method: 'POST', headers: requestHeaders, body: JSON.stringify(body) } };
 }
 
 export function audioContentPart({ base64, format = 'mp3' }) {
@@ -206,7 +209,11 @@ export function audioRejection(status, message) {
 
 export async function describeVoice({ name, group = '', guide = '', audio = null, settings = {}, fetcher = fetch, signal = null, log = () => {} }) {
     const prompt = describePrompt({ name, group, guide });
-    const target = { model: settings.model || '', source: settings.source || 'openai', reverseProxy: settings.reverseProxy || '', customUrl: settings.customUrl || '' };
+    const target = {
+        model: settings.model || '', source: settings.source || 'openai',
+        reverseProxy: settings.reverseProxy || '', customUrl: settings.customUrl || '',
+        headers: settings.headers || null,
+    };
     const attempt = async withAudio => {
         const parts = [{ type: 'text', text: prompt }];
         if (withAudio && audio) parts.push(audioContentPart(audio));

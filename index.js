@@ -397,7 +397,7 @@ voicePanel = installVoicePanel({
     search: ({ title }) => searchVoices({ baseUrl: settings.baseUrl, apiKey, title }),
     addClone,
     transcribe: ({ file, language }) => transcribeRefAudio({ file, language }),
-    describe: args => describeVoice({ ...args, log }),
+    describe: args => describeVoice({ ...args, log, settings: { ...(args.settings || {}), headers: hostHeaders() } }),
     previewAudio: entry => previewAudioBlob(entry),
     removeRef: id => refStore.delete(id),
     renameRef: (fromId, toId) => refStore.renameRef(fromId, toId),
@@ -431,6 +431,18 @@ function playPreview(entry) {
 }
 // The clone tab's transcript button. Only the transport lives here; the request
 // shape and every error message come from ai-voice.mjs.
+// The host only accepts its own CSRF token on same-origin POSTs, so every
+// backend call has to borrow the page's header bag instead of a bare Content-Type.
+function hostHeaders() {
+    try {
+        const get = ctx()?.getRequestHeaders;
+        if (typeof get === 'function') return get();
+    } catch (e) {
+        log('WARN', '读取酒馆请求头失败，改用默认请求头：' + (e && e.message ? e.message : e));
+    }
+    return { 'Content-Type': 'application/json' };
+}
+
 async function transcribeRefAudio({ file, language }) {
     if (!file) throw new Error('请先选择参考音频文件');
     const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'audio/mpeg' });

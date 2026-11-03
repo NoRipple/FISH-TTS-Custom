@@ -910,6 +910,12 @@ t('聊天请求走酒馆自己的转发端点，不带密钥', () => {
     assert.equal(body.messages[0].content, 'x');
     assert.ok(!JSON.stringify(body).includes('Authorization'));
 });
+t('聊天请求带上酒馆的请求头（含 CSRF），否则后端 403', () => {
+    const request = chatRequest({ messages: [{ role: 'user', content: 'x' }], source: 'openai', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'abc' } });
+    assert.equal(request.options.headers['X-CSRF-Token'], 'abc');
+    const plain = chatRequest({ messages: [{ role: 'user', content: 'x' }], source: 'openai' });
+    assert.equal(plain.options.headers['Content-Type'], 'application/json');
+});
 t('聊天响应取文字，字符串和数组都认', () => {
     assert.equal(chatText({ choices: [{ message: { content: '一段描述' } }] }), '一段描述');
     assert.equal(chatText({ choices: [{ message: { content: [{ text: 'a' }, { type: 'text', text: 'b' }] } }] }), 'ab');
