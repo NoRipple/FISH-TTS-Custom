@@ -2,7 +2,9 @@
 //   node test-core.mjs
 import assert from 'node:assert/strict';
 import { normalizeVoiceConfig, resolveVoice, voiceFor, VOICE_LANGUAGES, blocks, segmentFromBlock, findVoiceByToken, matchSpeakerVoice, buildRosterSection, replaceRosterBlock, ROSTER_MARKERS } from './core.mjs';
-import { normalizeLanguage, normalizeLanguages, normalizeVoiceEntry, mergeVoiceEntries, voiceLibraryRequest, fetchVoiceLibrary } from './voice-library.mjs';
+import { normalizeLanguage, normalizeLanguages, normalizeVoiceEntry, mergeVoiceEntries, mergeSyncedLibrary, voiceLibraryRequest, voiceSearchRequest, searchVoices, fetchVoiceLibrary } from './voice-library.mjs';
+import { collectGroupNames, normalizeGroups, groupEntries, addGroup, renameGroup, deleteGroup, assignGroup, setActive, toggleAll, removeEntries, groupSummary } from './voice-groups.mjs';
+import { normalizeRefAudio, refAudioKey, formatBytes, pruneRefAudio, RefAudioStore, REF_AUDIO_LIMIT_BYTES } from './ref-audio.mjs';
 import { voicePreview } from './preview.mjs';
 import { SynthesisQueue, clampConcurrency, DEFAULT_CONCURRENCY, MAX_CONCURRENCY } from './synthesis.mjs';
 import { synthesizeBrowser, parseRetryAfter, MAX_RETRIES, MAX_RETRY_DELAY_MS } from './browser-audio.mjs';
@@ -406,5 +408,250 @@ t('displayText 仍把语音段替换为占位符', () => {
 });
 t('showLines 默认关闭', () => assert.equal(DEFAULTS.showLines, false));
 t('patchTalkDom 接受 showLines 参数', () => assert.equal(patchTalkDom.length, 3));
+
+console.log('\n— voice-groups: 分组与批量 —');
+const sampleLib = () => ([
+    { id: 'a', name: '辻', group: '偶像大师·闪耀色彩', active: true },
+    { id: 'b', name: '凛', group: '偶像大师·闪耀色彩', active: false },
+    { id: 'c', name: '丹恒', group: '', active: true },
+]);
+t('组名去空白并去重', () => assert.deepEqual(normalizeGroups([' A ', 'A', '', 'B', null]), ['A', 'B']));
+t('组名按首次出现排序，声明的空组在末尾', () => {
+    const names = collectGroupNames([{ id: 'x', group: 'B' }, { id: 'y', group: 'A' }], ['A', '空组']);
+    assert.deepEqual(names, ['A', '空组', 'B']);
+});
+t('分桶：未分组单独拎出来', () => {
+    const { buckets, loose } = groupEntries(sampleLib(), ['偶像大师·闪耀色彩']);
+    assert.equal(buckets.length, 1);
+    assert.equal(buckets[0].entries.length, 2);
+    assert.deepEqual(loose.map(e => e.id), ['c']);
+});
+t('移动组：空组名即移入未分组', () => {
+    const list = sampleLib();
+    assert.equal(assignGroup(list, ['a', 'c'], ''), 1);
+    assert.equal(list.find(e => e.id === 'a').group, '');
+});
+t('移动组：未变化的条目不计入改动数', () => {
+    const list = sampleLib();
+    assert.equal(assignGroup(list, ['a'], '偶像大师·闪耀色彩'), 0);
+});
+t('同一 id 的多条记录一起移动', () => {
+    const list = [{ id: 'x', group: '' }, { id: 'x', group: 'old' }];
+    assert.equal(assignGroup(list, ['x'], '新组'), 2);
+    assert.deepEqual(list.map(e => e.group), ['新组', '新组']);
+});
+t('批量启用/禁用只算真正变化的条目', () => {
+    const list = sampleLib();
+    assert.equal(setActive(list, ['a', 'b'], true), 1);
+    assert.equal(list.find(e => e.id === 'b').active, true);
+    assert.equal(setActive(list, ['a', 'b'], true), 0);
+});
+t('组内 toggle：因有未启用成员，先全部启用', () => {
+    const list = sampleLib();
+    assert.equal(toggleAll(list, ['a', 'b'], 'toggle'), 1);
+    assert.equal(list.filter(e => ['a', 'b'].includes(e.id)).every(e => e.active === true), true);
+});
+t('组内 toggle：全启用时再次点击全部禁用', () => {
+    const list = sampleLib();
+    assert.equal(toggleAll(list, ['a', 'b'], 'toggle'), 1);
+    assert.equal(toggleAll(list, ['a', 'b'], 'toggle'), 2);
+    assert.equal(list.filter(e => ['a', 'b'].includes(e.id)).every(e => e.active === false), true);
+    assert.equal(list.find(e => e.id === 'c').active, true);
+});
+t('removeEntries 只删指定 id', () => assert.deepEqual(removeEntries(sampleLib(), ['b']).map(e => e.id), ['a', 'c']));
+t('新建组拒绝空名与重名', () => {
+    assert.throws(() => addGroup([], '  '), /组名不能为空/);
+    assert.throws(() => addGroup(['A'], 'A'), /已存在/);
+});
+t('改名同时改写组列表与成员', () => {
+    const list = sampleLib();
+    const result = renameGroup(list, ['偶像大师·闪耀色彩'], '偶像大师·闪耀色彩', '闪彩');
+    assert.deepEqual(result.groups, ['闪彩']);
+    assert.equal(result.changed, 2);
+    assert.equal(list.filter(e => e.group === '闪彩').length, 2);
+});
+t('改名为已存在的组被拒绝', () => {
+    assert.throws(() => renameGroup([], ['A', 'B'], 'A', 'B'), /已存在/);
+});
+t('删除组把成员移到未分组而不是删掉音色', () => {
+    const list = sampleLib();
+    const result = deleteGroup(list, ['偶像大师·闪耀色彩'], '偶像大师·闪耀色彩');
+    assert.deepEqual(result.groups, []);
+    assert.equal(result.moved, 2);
+    assert.equal(list.length, 3);
+    assert.equal(list.every(e => !e.group), true);
+});
+t('汇总统计激活数', () => {
+    const summary = groupSummary(sampleLib(), ['偶像大师·闪耀色彩', '空组']);
+    assert.equal(summary.total, 3);
+    assert.equal(summary.active, 2);
+    assert.equal(summary.groups[0].active, 1);
+    assert.equal(summary.groups[1].total, 0);
+    assert.equal(summary.ungrouped.total, 1);
+});
+
+console.log('\n— voice-library: 搜索与同步合并 —');
+t('搜索请求不带 self（否则会搜成自己的库）', () => {
+    const url = voiceSearchRequest('https://api.fish.audio', { title: '星穹铁道' });
+    assert.equal(url.includes('self='), false);
+    assert.equal(url.includes('title=' + encodeURIComponent('星穹铁道')), true);
+});
+t('搜索请求带分页与语言', () => {
+    const url = voiceSearchRequest('https://api.fish.audio/v1', { title: 'x', pageSize: 5, page: 2, language: 'ja' });
+    assert.equal(url.includes('page_size=5'), true);
+    assert.equal(url.includes('page_number=2'), true);
+    assert.equal(url.includes('language=ja'), true);
+    assert.equal(url.includes('/v1/model'), false);
+});
+t('page_size 被夹在 1–100', () => {
+    assert.equal(voiceSearchRequest('https://api.fish.audio', { pageSize: 999 }).includes('page_size=100'), true);
+    assert.equal(voiceSearchRequest('https://api.fish.audio', { pageSize: -3 }).includes('page_size=1'), true);
+});
+t('明文 http 的 Base URL 被拒绝', () => assert.throws(() => voiceSearchRequest('http://api.fish.audio'), /HTTPS/));
+t('非 HTTP 协议同样被拒绝', () => assert.throws(() => voiceSearchRequest('ftp://api.fish.audio'), /HTTPS/));
+t('空标题也能构造请求（拉全站第一页）', () => {
+    const url = voiceSearchRequest('https://api.fish.audio', { title: '   ' });
+    assert.equal(url.includes('title='), false);
+});
+t('搜索返回去重后的条目与总数', async () => {
+    const fetcher = async () => ({ ok: true, status: 200, json: async () => ({ total: 42, items: [{ _id: 'v1', title: '甲' }, { _id: 'v1', title: '甲' }, { _id: 'v2', title: '乙' }] }) });
+    const data = await searchVoices({ baseUrl: 'https://api.fish.audio', apiKey: 'k', title: 'x', fetcher });
+    assert.equal(data.entries.length, 2);
+    assert.equal(data.total, 42);
+});
+t('搜索无 Key 直接报错', async () => {
+    await assert.rejects(() => searchVoices({ baseUrl: 'https://api.fish.audio', apiKey: '' }), /API Key/);
+});
+t('搜索 HTTP 错误转成中文提示', async () => {
+    const fetcher = async () => ({ ok: false, status: 500, json: async () => null });
+    await assert.rejects(() => searchVoices({ baseUrl: 'https://api.fish.audio', apiKey: 'k', fetcher }), /HTTP 500/);
+});
+t('同步保留分组、克隆标记与自定义名称', () => {
+    const before = [{ id: 'v1', name: '我改的名字', group: 'HSR', active: false, refAudio: { transcript: 'hi', bytes: 10 }, guide: 'g' }];
+    const after = mergeSyncedLibrary([{ id: 'v1', name: 'API 标题', group: '', active: true }], before);
+    assert.equal(after[0].group, 'HSR');
+    assert.equal(after[0].name, '我改的名字');
+    assert.equal(after[0].refAudio.transcript, 'hi');
+    assert.equal(after[0].guide, 'g');
+});
+t('同步以 API 为准更新激活状态', () => assert.equal(
+    mergeSyncedLibrary([{ id: 'v1', active: true }], [{ id: 'v1', active: false }])[0].active, true));
+t('同步新增的音色保持 API 原名', () => {
+    const after = mergeSyncedLibrary([{ id: 'v9', name: '新音色' }], []);
+    assert.equal(after[0].name, '新音色');
+    assert.equal(after[0].group, '');
+});
+t('normalizeVoiceEntry 保留 group 与 refAudio', () => {
+    const entry = normalizeVoiceEntry({ _id: 'x', title: 't', group: ' G ', refAudio: { transcript: 'a', bytes: 99 } });
+    assert.equal(entry.group, 'G');
+    assert.equal(entry.refAudio.bytes, 99);
+});
+
+console.log('\n— ref-audio: 参考音频元数据 —');
+t('逐字稿必填', () => assert.throws(() => normalizeRefAudio({ bytes: 10, transcript: '   ' }), /逐字稿必填/));
+t('超过 20MB 拒绝', () => assert.throws(() => normalizeRefAudio({ bytes: REF_AUDIO_LIMIT_BYTES + 1, transcript: 'x' }), /20 MB/));
+t('空音频拒绝', () => assert.throws(() => normalizeRefAudio({ bytes: 0, transcript: 'x' }), /为空/));
+t('不支持的格式拒绝', () => assert.throws(() => normalizeRefAudio({ bytes: 10, transcript: 'x', type: 'video/mp4' }), /不支持的音频格式/));
+t('合法输入归一化并记时间', () => {
+    const meta = normalizeRefAudio({ bytes: 2048, transcript: ' 你好 ', name: ' 甲 ', language: ' ja ', type: 'audio/wav' });
+    assert.equal(meta.transcript, '你好');
+    assert.equal(meta.name, '甲');
+    assert.equal(meta.language, 'ja');
+    assert.ok(meta.savedAt > 0);
+});
+t('refAudioKey 带前缀且拒绝空 id', () => {
+    assert.equal(refAudioKey('abc'), 'ref:abc');
+    assert.throws(() => refAudioKey('  '), /缺少音色 ID/);
+});
+t('字节格式化', () => {
+    assert.equal(formatBytes(0), '0 KB');
+    assert.equal(formatBytes(2048), '2.0 KB');
+    assert.equal(formatBytes(3 * 1024 * 1024), '3.00 MB');
+});
+
+console.log('\n— ref-audio: IndexedDB 清理（内存桩） —');
+// A minimal IndexedDB stand-in: enough for RefAudioStore's get/put/keys/count/clear.
+function fakeIndexedDB() {
+    const tables = new Map();
+    const store = { tables };
+    const request = value => { const r = { result: value }; setTimeout(() => r.onsuccess?.({ target: r }), 0); return r; };
+    const tx = {
+        objectStore: () => ({
+            put(value, key) { tables.set(key, value); return request(undefined); },
+            get(key) { return request(tables.get(key) ?? undefined); },
+            getKey(key) { return request(tables.has(key) ? key : undefined); },
+            delete(key) { tables.delete(key); return request(undefined); },
+            clear() { tables.clear(); return request(undefined); },
+            getAllKeys() { return request([...tables.keys()]); },
+            count() { return request(tables.size); },
+        }),
+        abort() {},
+    };
+    store.open = () => { const r = { result: { objectStoreNames: { contains: () => true }, transaction: () => tx, close() {} } }; setTimeout(() => r.onsuccess?.(), 0); return r; };
+    return store;
+}
+t('写入后可查、可读、可计数', async () => {
+    const audio = new RefAudioStore(fakeIndexedDB());
+    await audio.put('v1', { size: 100 }, { transcript: 'hi' });
+    assert.equal(await audio.has('v1'), true);
+    assert.equal((await audio.get('v1')).meta.transcript, 'hi');
+    assert.equal(await audio.count(), 1);
+    assert.deepEqual(await audio.usage().then(u => u.count), 1);
+});
+t('清理无主参考音频', async () => {
+    const audio = new RefAudioStore(fakeIndexedDB());
+    await audio.put('keep', { size: 10 }, {});
+    await audio.put('orphan', { size: 20 }, {});
+    const result = await pruneRefAudio(audio, [{ id: 'keep', refAudio: { transcript: 'x' } }]);
+    assert.equal(result.removed, 1);
+    assert.equal(await audio.has('orphan'), false);
+    assert.equal(await audio.has('keep'), true);
+});
+t('报告元数据在但音频已丢的条目', async () => {
+    const audio = new RefAudioStore(fakeIndexedDB());
+    const result = await pruneRefAudio(audio, [{ id: 'ghost', refAudio: { transcript: 'x' } }]);
+    assert.deepEqual(result.missing, ['ghost']);
+});
+t('全部清空后计数归零', async () => {
+    const audio = new RefAudioStore(fakeIndexedDB());
+    await audio.put('a', { size: 1 }, {});
+    await audio.clear();
+    assert.equal(await audio.count(), 0);
+});
+t('没有 IndexedDB 时给出明确错误', async () => {
+    const audio = new RefAudioStore(null);
+    // Constructor falls back to the global, which node does not provide.
+    await assert.rejects(() => audio.count(), /IndexedDB/);
+});
+
+console.log('\n— voice-groups: 内置音色归类 —');
+t('内置音色从未分组提升到指定的组', () => {
+    // Mirrors fileRosterIntoGroup(): only ungrouped roster members move.
+    const rosterIds = ['r1', 'r2', 'r3'];
+    const list = [
+        { id: 'r1', group: '' },
+        { id: 'r2', group: '我自己分的组' },
+        { id: 'r3' },
+        { id: 'other', group: '' },
+    ];
+    const targets = rosterIds.filter(id => list.some(e => e.id === id && !e.group));
+    assert.deepEqual(targets, ['r1', 'r3']);
+    assert.equal(assignGroup(list, targets, '偶像大师·闪耀色彩'), 2);
+    assert.equal(list.find(e => e.id === 'r2').group, '我自己分的组');
+    assert.equal(list.find(e => e.id === 'other').group, '');
+});
+t('已归类的音色重复归类不再改动', () => {
+    const list = [{ id: 'r1', group: '偶像大师·闪耀色彩' }];
+    const targets = ['r1'].filter(id => list.some(e => e.id === id && !e.group));
+    assert.deepEqual(targets, []);
+    assert.equal(assignGroup(list, targets, '偶像大师·闪耀色彩'), 0);
+});
+t('组被删除后内置音色仍留在未分组，不会无限复活成组', () => {
+    const list = [{ id: 'r1', group: '' }];
+    const declared = [];
+    // fileRosterIntoGroup bails out when the group is not declared any more.
+    assert.equal(declared.includes('偶像大师·闪耀色彩'), false);
+    assert.equal(list[0].group, '');
+});
 
 console.log('\n全部通过：' + pass + ' 项');

@@ -5,7 +5,10 @@ import { SynthesisQueue } from './synthesis.mjs';
 import { installInline } from './inline.mjs';
 import { installPromptRegex } from './prompt-regex.mjs';
 import { voicePreview } from './preview.mjs';
-import { fetchVoiceLibrary } from './voice-library.mjs';
+import { fetchVoiceLibrary, mergeSyncedLibrary, normalizeVoiceEntry } from './voice-library.mjs';
+import { RefAudioStore, normalizeRefAudio, formatBytes, pruneRefAudio } from './ref-audio.mjs';
+import { installVoicePanel } from './voice-panel.mjs';
+import { assignGroup } from './voice-groups.mjs';
 
 const ctx = () => SillyTavern.getContext();
 const KEY = 'fish_dialogue_v1';
@@ -20,6 +23,7 @@ if (settings.schemaVersion !== 120) {
 settings.browserLibraryId ||= crypto.randomUUID();
 ctx().saveSettingsDebounced();
 const browserStore = new BrowserAudioStore(settings.browserLibraryId);
+const refStore = new RefAudioStore();
 let apiKey = settings.savedApiKey || ''; // Saved only on explicit user action.
 const audio = new Audio(); audio.preload = 'auto';
 const logs = [], seen = new Map();
@@ -28,7 +32,7 @@ let inline, libraryEntries = [];
 const root = document.createElement('section'); root.id = 'fish-dialogue';
 root.innerHTML = `
 <div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header" role="button" tabindex="0"><b>Fish 对话音声</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.5.3</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.5.4</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -47,21 +51,17 @@ root.innerHTML = `
 <label class="checkbox_label"><input id="fa-auto-multi" type="checkbox"> 自动多人配音</label>
 <small class="fa-hint">开启后逐句按各角色音色合成；关闭则所有句子都用当前语言的默认音色。</small></div>
 </details>
-<details open class="fa-sec"><summary><i class="fa-solid fa-microphone-lines"></i><span>音色</span><span class="fa-badge" id="fa-badge-voices"></span></summary>
-<div class="fa-sub"><div class="fa-subhead">音色库</div>
-<div class="fa-row"><button id="fa-library-sync">从 Fish 同步</button><small id="fa-voicecount">未同步</small></div>
-<div class="fa-row"><button id="fa-import-roster">导入内置音色（28）</button></div>
-<small class="fa-hint">同步只读取你 Fish 账号中已创建或已收藏的音色；未标注语言的音色在三种语言下都可选。库只影响选择列表，不会修改 Fish 上的任何音色。</small>
-<div id="fa-voicelib"></div>
-<div class="fa-lib-add"><input id="fa-lib-name" class="text_pole" placeholder="名称（可留空）"><input id="fa-lib-id" class="text_pole" placeholder="音色 ID"><select id="fa-lib-lang" class="text_pole"><option value="">通用</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option></select><input id="fa-lib-guide" class="text_pole" placeholder="使用指南（可选）"><button id="fa-lib-add">手动添加</button></div>
-</div>
+<details class="fa-sec"><summary><i class="fa-solid fa-microphone-lines"></i><span>音色与角色绑定</span><span class="fa-badge" id="fa-badge-voices"></span></summary>
+<div class="fa-row"><button id="fa-open-voices">打开音色管理</button><small id="fa-voicecount">未同步</small></div>
+<div class="fa-row"><button id="fa-library-sync">从 Fish 同步</button><button id="fa-import-roster">导入内置音色（28）</button></div>
+<small class="fa-hint">分组、批量启停、修改音色 ID、搜索 Fish 公开音色、一次性克隆都在音色管理弹窗里。也可以从顶栏的魔法棒菜单打开。</small>
 <div class="fa-sub"><div class="fa-subhead">角色绑定</div>
 <div id="fa-voices"></div>
 <div class="fa-row"><button id="fa-add">添加角色</button><button id="fa-save-voices">保存角色绑定</button></div>
 <small class="fa-hint">角色名须与世界书输出完全一致；某语言留空即使用默认音色。</small>
 </div>
 </details>
-<details open class="fa-sec"><summary><i class="fa-solid fa-book"></i><span>世界书与语言</span></summary>
+<details class="fa-sec"><summary><i class="fa-solid fa-book"></i><span>世界书与语言</span></summary>
 <label>输出语言<select id="fa-language"><option value="orig">原文（关闭配音世界书）</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option></select></label>
 <small class="fa-hint">语言选择在“应用”成功后生效；只改变下一次聊天生成的提示词，旧消息不会自动翻译。</small>
 <div class="fa-row"><button id="fa-apply-language">应用语言</button><button id="fa-add-regex">添加正则</button></div>
@@ -107,6 +107,29 @@ root.innerHTML = `
 for (const button of root.querySelectorAll('button')) button.classList.add('menu_button');
 root.querySelector('.inline-drawer-header').addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.currentTarget.click();}});
 const $ = id => id === 'audio' ? audio : root.querySelector('#fa-' + id);
+// Wand menu entry. SillyTavern renders these into #extensionsMenu; the drawer link
+// stays available for users who never open that menu.
+function mountWandMenu() {
+    const host = document.querySelector('#extensionsMenu');
+    if (!host || host.querySelector('#fa-wand-voices')) return;
+    const item = document.createElement('div');
+    item.id = 'fa-wand-voices';
+    item.className = 'list-group-item flex-container flexGap5 interactable';
+    item.tabIndex = 0;
+    item.title = 'Fish 对话音声：音色管理';
+    const icon = document.createElement('div'); icon.className = 'fa-solid fa-microphone-lines extensionsMenuExtensionButton';
+    const label = document.createElement('span'); label.textContent = '音色管理';
+    item.append(icon, label);
+    item.addEventListener('click', () => voicePanel?.open('library'));
+    item.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); voicePanel?.open('library'); } });
+    host.append(item);
+}
+// The panel installer runs later in module order; the click handler only fires
+// after the module finished loading, so the optional chain is the guard.
+mountWandMenu();
+const c0 = ctx();
+if (c0.eventTypes?.APP_READY) c0.eventSource.on(c0.eventTypes.APP_READY, mountWandMenu);
+
 function save() { ctx().saveSettingsDebounced(); }
 function log(level, text) {
     let safe = String(text);
@@ -137,7 +160,7 @@ function click(id, fn) {
     });
 }
 async function api(action,input={},signal,update) {
-    if(action==='tts')return synthesizeBrowser(input,apiKey,browserStore,signal,update);
+    if(action==='tts')return synthesizeBrowser(input,apiKey,browserStore,signal,update,fetch,loadRefAudio);
     if(action==='library')return browserStore.list();
     if(action==='library/limit')return browserStore.setLimit(input.maxFiles);
     if(action==='audio'){
@@ -202,6 +225,15 @@ const queue = new SpeechQueue({
     },
 });
 let voiceLibrary = Array.isArray(settings.voiceLibrary) ? settings.voiceLibrary : [];
+// The reference bytes are stored under the voice id, so a lookup only has to ask
+// whether this voice is a clone and then attach the blob to the request.
+async function loadRefAudio(voiceId) {
+    const entry = voiceLibrary.find(item => item.id === voiceId);
+    if (!entry?.refAudio) return null;
+    const record = await refStore.get(voiceId);
+    if (!record?.blob) throw new Error(`参考音频已丢失（${entry.name || voiceId}）：请到“音色管理 → 快速克隆”重新导入`);
+    return { blob: record.blob, transcript: entry.refAudio.transcript, key: 'ref:' + voiceId };
+}
 function languageLabel(code) { return { zh: '中文', ja: '日语', en: '英语' }[code] || code; }
 // No declared language means "usable anywhere": most clones carry no language
 // metadata, and hiding them would empty the selector for those users.
@@ -232,55 +264,12 @@ function fillSelect(select, language, current) {
     select.value = current || '';
 }
 function renderVoiceLibrary() {
-    $('voicelib').replaceChildren();
-    $('voicecount').textContent = voiceLibrary.length ? voiceLibrary.length + ' 个音色' : '未同步';
-    for (const entry of voiceLibrary) {
-        const row = document.createElement('div'); row.className = 'fa-lib-item';
-        const head = document.createElement('div'); head.className = 'fa-lib-head';
-        const active = document.createElement('input'); active.type = 'checkbox'; active.checked = entry.active !== false;
-        active.title = '激活后才会同步到世界书名册';
-        active.addEventListener('change', () => { entry.active = active.checked; settings.voiceLibrary = voiceLibrary; save(); });
-        const name = document.createElement('input'); name.className = 'text_pole fa-lib-name'; name.value = entry.name || entry.id; name.title = '可修改显示名称（同名亦可用于按角色名自动匹配）';
-        name.addEventListener('change', () => {
-            const value = name.value.trim();
-            if (value) { entry.name = value; settings.voiceLibrary = voiceLibrary; save(); refreshVoiceSelectors(); log('INFO', '音色名称已改为 ' + value); }
-            else name.value = entry.name || entry.id;
-        });
-        const meta = document.createElement('small');
-        meta.textContent = (entry.languages.length ? entry.languages.map(languageLabel).join('/') : '通用') + (entry.state && entry.state !== 'trained' ? ' · ' + entry.state : '') + (entry.active === false ? ' · 未激活' : '');
-        const play = document.createElement('button'); play.type = 'button'; play.textContent = '▶ 试听';
-        play.onclick = () => {
-            try {
-                if (queue.running && queue.current?.preview) { queue.stop(); return; }
-                queue.stop();
-                queue.enqueue([voicePreview({ voice: entry.id, language: entry.languages[0] || (settings.language === 'orig' ? 'zh' : settings.language), settings })]);
-            } catch (e) { log('ERROR', e.message); }
-        };
-        const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '删除';
-        remove.onclick = () => {
-            voiceLibrary = voiceLibrary.filter(x => x.id !== entry.id);
-            settings.voiceLibrary = voiceLibrary; save(); refreshVoiceSelectors();
-            log('INFO', '已从音色库移除 ' + entry.name);
-        };
-        head.append(active, name, meta, play, remove);
-        row.append(head);
-        const guide = document.createElement('input');
-        guide.className = 'text_pole fa-lib-guide-input';
-        guide.placeholder = '使用指南（可选，会同步进世界书名册）';
-        guide.value = entry.guide || '';
-        guide.title = '这段描述会写进世界书的音色名册，帮助模型判断何时选用该音色';
-        guide.addEventListener('change', () => { entry.guide = guide.value.trim(); settings.voiceLibrary = voiceLibrary; save(); });
-        row.append(guide);
-        $('voicelib').append(row);
-    }
+    // The list itself lives in the voice management dialog; this panel only keeps
+    // the counters so the settings page stays short.
     const activeCount = voiceLibrary.filter(e => e.active !== false).length;
+    $('voicecount').textContent = voiceLibrary.length ? activeCount + '/' + voiceLibrary.length + ' 个音色' : '未同步';
     $('badge-voices').textContent = voiceLibrary.length ? activeCount + '/' + voiceLibrary.length : '';
     $('chip-active').textContent = voiceLibrary.length ? '音色 ' + activeCount + '/' + voiceLibrary.length : '音色 —';
-    if (!voiceLibrary.length) {
-        const empty = document.createElement('div'); empty.className = 'fa-empty';
-        empty.textContent = '还没有音色：点上方“导入内置音色（28）”或“从 Fish 同步”开始。';
-        $('voicelib').append(empty);
-    }
 }
 function renderDefaultVoiceSelects() {
     const host = $('default'); host.replaceChildren();
@@ -322,27 +311,73 @@ function collectVoiceRows() {
 function renderVoiceRows(rows) { $('voices').replaceChildren(); for (const row of rows) addVoice(row.name, row.langs); }
 // Rebuild every selector from the library. Character rows are carried across so
 // adding or removing a library voice never discards in-progress edits.
-function refreshVoiceSelectors() {
+function refreshAll() {
     const rows = collectVoiceRows();
     renderVoiceLibrary(); renderDefaultVoiceSelects(); renderVoiceRows(rows);
+    voicePanel?.refresh();
 }
+let voicePanel;
+voicePanel = installVoicePanel({
+    context: ctx, settings, log, save,
+    library: () => voiceLibrary,
+    setLibrary: next => { voiceLibrary = next; settings.voiceLibrary = next; save(); },
+    refresh,
+    preview: entry => playPreview(entry),
+    search: ({ title }) => searchVoices({ baseUrl: settings.baseUrl, apiKey, title }),
+    addClone,
+    removeRef: id => refStore.delete(id),
+    clearRefs: async () => { const usage = await refStore.usage(); await refStore.clear(); return usage.count; },
+    refUsage: () => refStore.usage(),
+});
+function refresh() { refreshAll(); }
+click('open-voices', () => voicePanel.open('library'));
 click('library-sync', async () => {
     const entries = await fetchVoiceLibrary({ baseUrl: settings.baseUrl, apiKey });
-    voiceLibrary = entries; settings.voiceLibrary = entries; save();
-    refreshVoiceSelectors();
-    log('INFO', '音色库已同步：' + entries.length + ' 个音色');
-    $('status').textContent = '音色库已同步 ' + entries.length + ' 个音色';
-});
-click('lib-add', () => {
-    const name = $('lib-name').value.trim(), id = $('lib-id').value.trim(), language = $('lib-lang').value;
-    const guide = $('lib-guide').value.trim();
-    if (!id) throw new Error('请填写音色 ID');
-    if (voiceLibrary.some(entry => entry.id === id)) throw new Error('该音色已在音色库中');
-    voiceLibrary = voiceLibrary.concat([{ id, name: name || id, languages: language ? [language] : [], state: '', guide }]);
+    // Groups, clone markers and edited names are plugin-side only; a sync that
+    // dropped them would reorganise the user's library behind their back.
+    voiceLibrary = mergeSyncedLibrary(entries, voiceLibrary);
     settings.voiceLibrary = voiceLibrary; save();
-    $('lib-name').value = ''; $('lib-id').value = ''; $('lib-lang').value = ''; $('lib-guide').value = '';
-    refreshVoiceSelectors(); log('INFO', '已添加音色 ' + (name || id));
+    refreshAll();
+    log('INFO', '音色库已同步：' + voiceLibrary.length + ' 个音色');
+    $('status').textContent = '音色库已同步 ' + voiceLibrary.length + ' 个音色';
 });
+function playPreview(entry) {
+    if (queue.running && queue.current?.preview) { queue.stop(); return; }
+    const language = entry.languages?.[0] || (settings.language === 'orig' ? 'zh' : settings.language);
+    queue.stop();
+    queue.enqueue([voicePreview({ voice: entry.id, language, settings })]);
+}
+async function addClone({ file, name, language, transcript }) {
+    if (!file) throw new Error('请先选择参考音频文件');
+    const meta = normalizeRefAudio({ name, transcript, language, bytes: file.size, type: file.type });
+    const entryName = meta.name || (file.name || '').replace(/\.[^.]+$/, '') || '克隆音色';
+    const id = globalThis.crypto?.randomUUID?.() || ctx().uuidv4();
+    await refStore.put(id, file, meta);
+    const entry = normalizeVoiceEntry({
+        id, title: entryName, languages: meta.language ? [meta.language] : [],
+        guide: '', active: true,
+        refAudio: { transcript: meta.transcript, bytes: meta.bytes, type: meta.type, savedAt: Date.now() },
+    });
+    entry.group = '';
+    voiceLibrary = voiceLibrary.concat([entry]);
+    settings.voiceLibrary = voiceLibrary; save();
+    refreshAll();
+    log('INFO', `已保存克隆音色「${entryName}」（${formatBytes(meta.bytes)}）`);
+}
+// Orphaned reference audio (voice deleted from the library, or bytes lost) is
+// reported once at startup instead of failing silently at synthesis time.
+(async function settleRefAudio() {
+    try {
+        const { removed, missing } = await pruneRefAudio(refStore, voiceLibrary);
+        if (removed) log('INFO', `已清理 ${removed} 段无主参考音频`);
+        if (missing.length) {
+            voiceLibrary = voiceLibrary.filter(entry => !missing.includes(entry.id));
+            settings.voiceLibrary = voiceLibrary;
+            for (const name of missing) log('ERROR', `参考音频丢失，已移除克隆音色 ${name}`);
+            save(); refreshAll();
+        }
+    } catch (e) { log('WARN', '参考音频自检失败：' + e.message); }
+})();
 function importRosterEntries(roster) {
     let added = 0;
     const byId = new Map(voiceLibrary.map(entry => [entry.id, entry]));
@@ -361,7 +396,7 @@ function importRosterEntries(roster) {
             added++;
         }
     }
-    voiceLibrary = [...byId.values()]; settings.voiceLibrary = voiceLibrary; save(); refreshVoiceSelectors();
+    voiceLibrary = [...byId.values()]; settings.voiceLibrary = voiceLibrary; save(); refreshAll();
     return added;
 }
 async function loadRoster() {
@@ -371,6 +406,7 @@ async function loadRoster() {
 }
 click('import-roster', async () => {
     const added = importRosterEntries(await loadRoster());
+    refreshAll();
     log('INFO', `已导入内置音色 ${added} 个（已存在的仅补全信息）`);
     $('status').textContent = `内置音色导入完成，新增 ${added} 个`;
 });
@@ -424,12 +460,39 @@ click('preview-default', () => {
 })();
 renderVoiceLibrary(); renderDefaultVoiceSelects();
 renderVoiceRows(Object.entries(settings.voices).map(([name, config]) => ({ name, langs: normalizeVoiceConfig(config) })));
+refreshAll();
+// Two groups ship with the plugin so the roster lands somewhere sensible and the
+// empty HSR group is ready for search results. They are only defaults: deleting
+// them is a normal user action and must not be undone on the next load.
+const DEFAULT_GROUPS = ['偶像大师·闪耀色彩', '崩坏：星穹铁道'];
+if (!Array.isArray(settings.voiceGroups) || !settings.voiceGroups.length) {
+    settings.voiceGroups = DEFAULT_GROUPS.slice(); save();
+}
+// Built-in roster entries are filed under the idol group on every start, not just
+// after the first import: a library imported by an older version has the same
+// entries but no group yet, and the import flag would otherwise freeze them as
+// "未分组" forever. Anything the user already filed elsewhere is left alone.
+const ROSTER_GROUP = '偶像大师·闪耀色彩';
+async function fileRosterIntoGroup(roster) {
+    if (!(settings.voiceGroups || []).includes(ROSTER_GROUP)) return 0;
+    const rosterIds = roster.map(item => item.id);
+    const moved = assignGroup(voiceLibrary, rosterIds.filter(id => voiceLibrary.some(e => e.id === id && !e.group)), ROSTER_GROUP);
+    if (moved) { settings.voiceLibrary = voiceLibrary; save(); }
+    return moved;
+}
 (async function bootstrapRoster() {
-    if ((settings.rosterImported || 0) < 2) {
-        try { importRosterEntries(await loadRoster()); settings.rosterImported = 2; save(); log('INFO', '已自动导入内置音色'); }
-        catch (e) { log('WARN', '内置音色自动导入失败：' + e.message); }
-    }
+    try {
+        const roster = await loadRoster();
+        const added = importRosterEntries(roster);
+        if ((settings.rosterImported || 0) < 2) {
+            settings.rosterImported = 2; save();
+            log('INFO', `已自动导入内置音色 ${added} 个`);
+        }
+        const moved = await fileRosterIntoGroup(roster);
+        if (moved) log('INFO', `已把 ${moved} 个内置音色归入「${ROSTER_GROUP}」`);
+    } catch (e) { log('WARN', '内置音色自动导入失败：' + e.message); }
     await applyVoiceGuides();
+    refreshAll();
 })();
 async function synthesizeRaw(item, signal, update) {
         // Message identities are persisted only when audio is requested, not during rendering.
@@ -646,4 +709,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.5.3 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.5.4 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');

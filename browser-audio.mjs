@@ -1,4 +1,7 @@
-export function ttsRequest(input, apiKey) {
+// One-shot clone payload. Fish accepts raw reference bytes + the exact transcript
+// on each convert call and stores nothing server-side, so the request is
+// multipart and carries the audio again on every synthesis.
+export function ttsRequest(input, apiKey, refAudio = null) {
     const base=new URL(input.baseUrl || 'https://api.fish.audio');
     if(base.protocol!=='https:' || base.username || base.password || base.search || base.hash) throw Error('Base URL 必须为不含账号、查询参数的 HTTPS 地址');
     base.pathname=base.pathname.replace(/\/+$/,'').replace(/\/v1$/,'')+'/';
@@ -8,7 +11,19 @@ export function ttsRequest(input, apiKey) {
     const model=input.model?.trim() || 's2.1-pro-free';
     if(/[\r\n]/.test(model)) throw Error('模型名称无效');
     if(base.hostname==='api.fish.audio' && !['s2.1-pro-free','s2.1-pro','s2-pro','s1','drama-3-preview'].includes(model)) throw Error('未知官方模型，请确认模型名称');
-    return {url:'/proxy/'+new URL('v1/tts',base).href,baseUrl:base.href,model,
+    const url='/proxy/'+new URL('v1/tts',base).href;
+    if(refAudio){
+        if(!refAudio.transcript?.trim()) throw Error('一次性克隆缺少逐字稿');
+        const body=new FormData();
+        body.append('text',input.text);
+        body.append('format','mp3');
+        body.append('latency','normal');
+        body.append('references',JSON.stringify([{audio:'reference',text:String(refAudio.transcript).trim()}]));
+        body.append('references[0].audio',refAudio.blob,refAudio.filename || 'reference.mp3');
+        // Content-Type is omitted on purpose: the browser must add the multipart boundary.
+        return {url,baseUrl:base.href,model,options:{method:'POST',headers:{Authorization:'Bearer '+apiKey.trim(),model},body}};
+    }
+    return {url,baseUrl:base.href,model,
         options:{method:'POST',headers:{Authorization:'Bearer '+apiKey.trim(),model,'Content-Type':'application/json'},body:JSON.stringify({text:input.text,reference_id:input.voice.trim(),format:'mp3',latency:'normal'})}};
 }
 export async function audioKey(input) {
@@ -140,10 +155,13 @@ async function fetchAudio(request, signal, update, fetcher) {
     } finally {clearTimeout(timer);signal?.removeEventListener('abort',abort);try{await reader?.cancel();}catch{}}
 }
 
-export async function synthesizeBrowser(input,key,store,signal,update=()=>{},fetcher=fetch) {
-    const request=ttsRequest(input,key);
+export async function synthesizeBrowser(input,key,store,signal,update=()=>{},fetcher=fetch,loadRef=null) {
+    const ref=loadRef ? await loadRef(input.voice) : null;
+    const request=ttsRequest(input,key,ref);
     const normalized={...input,baseUrl:request.baseUrl,model:request.model,voice:input.voice.trim()};
-    const id=await audioKey(normalized);signal?.throwIfAborted();
+    // The key includes the reference bytes identifier, otherwise a clone and a
+    // plain voice with the same id would collide in the audio cache.
+    const id=await audioKey({...normalized,ref:ref?.key || ''});signal?.throwIfAborted();
     const cached=await store.read(id);signal?.throwIfAborted();
     input.assetId=id;
     if(cached){input.cacheSource='disk';return cached;}
