@@ -25,7 +25,7 @@ export function installVoicePanel(deps) {
     const {
         context, settings, log, save, library, setLibrary, refresh,
         preview, search, addClone, removeRef, clearRefs, refUsage,
-        settingsHost = null, title = TITLE,
+        settingsHost = null, adoptSettings = null, title = TITLE,
     } = deps;
     let dialog = null, tab = 'library', selection = new Set(), results = [], lastQuery = '';
     let filter = '';
@@ -237,6 +237,9 @@ export function installVoicePanel(deps) {
             host.append(hint('设置表单尚未就绪；请刷新页面后重试。'));
             return;
         }
+        // The host builds its controls the first time it is shown; doing it here
+        // keeps that work off the module-load path.
+        if (!settingsHost.innerHTML.trim()) adoptSettings?.();
         host.append(settingsHost);
     }
 

@@ -300,56 +300,16 @@
 @media (prefers-reduced-motion: reduce) { #fa-subdialog-ask, #fa-subdialog-confirm { animation: none; } }
 
 
-/* ---- 1.6.1 聊天页悬浮快捷切换（中/日/英 · 启停 · 音色管理） ----
-   全部类名走 fa-dock-* 前缀，避开 Font Awesome 的 fa-* 图标类。
-   配色取自酒馆主题变量，深浅主题自动跟随。 */
-#fa-quick-dock {
-    position: fixed;
-    right: 18px;
-    bottom: 96px;
-    z-index: 30000;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 9px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 14%, transparent);
-    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 88%, transparent);
-    backdrop-filter: blur(10px);
-    box-shadow: 0 6px 22px color-mix(in srgb, var(--SmartThemeBodyColor) 18%, transparent);
-    user-select: none;
-    transition: opacity .18s ease, transform .18s ease;
-}
-#fa-quick-dock.fa-dock-off { opacity: .55; }
-#fa-quick-dock:hover { opacity: 1; }
-#fa-quick-dock .fa-dock-btn { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; margin: 0 !important; padding: 0 !important; border-radius: 50%; cursor: pointer; font-family: inherit !important; line-height: 1; transition: transform .12s ease, background .12s ease, color .12s ease; }
-#fa-quick-dock .fa-dock-btn:active { transform: scale(.94); }
-#fa-quick-dock .fa-dock-btn:disabled { cursor: default; opacity: .5; }
-#fa-quick-dock .fa-dock-lang {
-    width: 26px; height: 26px;
-    font-size: 12px !important; letter-spacing: 0; font-weight: 600;
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 24%, transparent);
-    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 70%, transparent);
-    color: var(--SmartThemeBodyColor);
-}
-#fa-quick-dock .fa-dock-lang:hover:not(:disabled) { border-color: #b0442c; color: #b0442c; }
-#fa-quick-dock .fa-dock-open {
-    width: 40px; height: 40px;
-    font-size: 15px !important; font-weight: 600;
-    border: 1px solid #b0442c;
-    background: #b0442c;
-    color: #f7f2e8;
-    box-shadow: 0 3px 10px color-mix(in srgb, #b0442c 40%, transparent);
-}
-#fa-quick-dock .fa-dock-open:hover:not(:disabled) { background: color-mix(in srgb, #b0442c 85%, #000); }
-#fa-quick-dock .fa-dock-switch { display: inline-flex; align-items: center; margin: 0 !important; cursor: pointer; }
-#fa-quick-dock .fa-dock-toggle { display: none !important; }
-#fa-quick-dock .fa-dock-track { position: relative; display: block; width: 28px; height: 15px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 30%, transparent); background: transparent; transition: background .15s ease, border-color .15s ease; }
-#fa-quick-dock .fa-dock-track::after { content: ""; position: absolute; top: 1px; left: 1px; width: 9px; height: 9px; border-radius: 50%; background: color-mix(in srgb, var(--SmartThemeBodyColor) 45%, transparent); transition: transform .16s cubic-bezier(.2,.8,.3,1), background .15s ease; }
-#fa-quick-dock .fa-dock-toggle:checked + .fa-dock-track { background: color-mix(in srgb, #b0442c 22%, transparent); border-color: #b0442c; }
-#fa-quick-dock .fa-dock-toggle:checked + .fa-dock-track::after { transform: translateX(13px); background: #b0442c; }
-
-@media (max-width: 720px) { #fa-quick-dock { right: 10px; bottom: 84px; padding: 5px 7px; gap: 6px; } }
+/* ---- 1.6.3 聊天页悬浮球 ------------------------------------------------
+   Modelled on the Outfit-Manager FAB: one draggable round button with its
+   satellites stacked to the LEFT. Geometry and colour are set inline with
+   !important by quick-dock.mjs, because SillyTavern themes out-specify plain
+   stylesheet rules for button/label/input. Only hover polish lives here. */
+#fa-quick-dock .fa-dock-main:hover { box-shadow: 0 6px 20px rgba(0,0,0,.45) !important; }
+#fa-quick-dock .fa-dock-main:active { transform: scale(.94); }
+#fa-quick-dock .fa-dock-power:hover,
+#fa-quick-dock .fa-dock-lang:hover { background: rgba(0,0,0,.62) !important; transform: scale(1.08); }
+#fa-quick-dock .fa-dock-lang { font-family: var(--monoFontFamily, ui-monospace, monospace) !important; }
 
 /* ---- 1.6.2 设置标签页（原扩展设置抽屉） ---------------------------------
    The settings form is re-parented into #fa-voice-dialog, so the rules that used

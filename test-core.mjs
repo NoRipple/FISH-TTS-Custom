@@ -1,9 +1,10 @@
 // Pure-logic self test. No SillyTavern, no browser, no dependencies:
 //   node test-core.mjs
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { normalizeVoiceConfig, resolveVoice, voiceFor, VOICE_LANGUAGES, blocks, segmentFromBlock, findVoiceByToken, matchSpeakerVoice, buildRosterSection, replaceRosterBlock, ROSTER_MARKERS } from './core.mjs';
 import { normalizeLanguage, normalizeLanguages, normalizeVoiceEntry, mergeVoiceEntries, mergeSyncedLibrary, voiceLibraryRequest, voiceSearchRequest, searchVoices, fetchVoiceLibrary } from './voice-library.mjs';
-import { nextLanguage, clampPosition, LANG_LABEL, LANG_NAME } from './quick-dock.mjs';
+import { nextLanguage, clampPosition, LANG_LABEL, LANG_NAME, defaultPosition, MAIN_SIZE } from './quick-dock.mjs';
 import { collectGroupNames, normalizeGroups, groupEntries, addGroup, renameGroup, deleteGroup, assignGroup, setActive, toggleAll, removeEntries, groupSummary } from './voice-groups.mjs';
 import { normalizeRefAudio, refAudioKey, formatBytes, pruneRefAudio, RefAudioStore, REF_AUDIO_LIMIT_BYTES } from './ref-audio.mjs';
 import { voicePreview } from './preview.mjs';
@@ -756,6 +757,38 @@ t('用户自己建的组在合并后仍然保留', () => {
     for (const name of DEFAULT_GROUP_NAMES) if (!next.includes(name)) next.push(name);
     assert.equal(next[0], '我的私人组');
     assert.equal(next.length, DEFAULT_GROUP_NAMES.length + 1);
+});
+
+// 1.6.3 回归：入口点必须在模块加载期就能安全地引用 voicePanel。
+// 背景：mountWandMenu() 与 installDock() 在模块求值阶段就绑定点击回调，
+// 而 voicePanel 直到文件中段才赋值。如果声明写成 `let voicePanel;`，
+// 这段区间处于暂时性死区，任何 `voicePanel?.open()` 都会抛 ReferenceError，
+// 表现就是"点魔法棒和悬浮球都没有弹窗"。这里锁住两个可静态检查的事实。
+t('入口函数引用 voicePanel 时不会落入暂时性死区', () => {
+    const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+    const declLet = source.indexOf('let voicePanel');
+    const declVar = source.indexOf('var voicePanel');
+    assert.ok(declVar >= 0, 'index.js 应使用 var 声明 voicePanel');
+    assert.ok(declLet < 0, 'index.js 不应再用 let 声明 voicePanel');
+    // 两个入口都必须走可选链，避免未赋值时抛错。
+    assert.ok(/voicePanel\?\.open\('library'\)/.test(source));
+});
+t('悬浮球按 Outfit-Manager 风格提供主钮与两个卫星钮', () => {
+    const source = readFileSync(new URL('./quick-dock.mjs', import.meta.url), 'utf8');
+    assert.ok(source.includes("'fa-dock-main'"));
+    assert.ok(source.includes('fa-dock-power'));
+    assert.ok(source.includes('fa-dock-lang'));
+    // 卫星挂在主钮左侧：right:calc(100% + Npx)
+    assert.ok(source.includes('right:calc(100% + '));
+    // 位置持久化
+    assert.ok(source.includes('settings.dockPos'));
+});
+t('悬浮球默认停在右下角且不出屏', () => {
+    const { x, y } = defaultPosition(1280, 800, MAIN_SIZE);
+    assert.equal(x, 1280 - 16 - MAIN_SIZE);
+    assert.equal(y, 800 - 80 - MAIN_SIZE);
+    const tiny = defaultPosition(10, 10, MAIN_SIZE);
+    assert.ok(tiny.x >= 10 && tiny.y >= 10);
 });
 
 console.log('\n全部通过：' + pass + ' 项');

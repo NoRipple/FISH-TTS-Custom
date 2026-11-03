@@ -31,8 +31,15 @@ const audio = new Audio(); audio.preload = 'auto';
 const logs = [], seen = new Map();
 let worldModule;
 let inline, libraryEntries = [];
+// Rendered on demand: the form binds by id at module load, and every lookup has
+// to find its control then, so it cannot wait for a caller to build it.
+export function renderSettingsMarkup(host) {
+    if (!host.innerHTML.trim()) host.innerHTML = SETTINGS_MARKUP;
+    return host;
+}
+
 export const SETTINGS_MARKUP = `
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.6.2</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.6.3</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -108,7 +115,13 @@ export const SETTINGS_MARKUP = `
 // and move into the real tab when it is built.
 const settingsHost = document.createElement('div');
 settingsHost.className = 'fa-settings';
-settingsHost.innerHTML = SETTINGS_MARKUP;
+settingsHost.id = 'fa-settings-host';
+// Parked inside the host page rather than detached: the form runs its own setup on
+// load, and the plugin's error dialog needs a parent. It is hidden until the
+// dialog adopts it.
+settingsHost.hidden = true;
+document.body.append(settingsHost);
+renderSettingsMarkup(settingsHost);
 const $ = id => id === 'audio' ? audio : settingsHost.querySelector('#fa-' + id);
 // The wand menu is the only entry point now that the settings drawer is gone.
 // SillyTavern renders these into #extensionsMenu.
@@ -335,10 +348,14 @@ function refreshAll() {
     renderVoiceLibrary(); renderDefaultVoiceSelects(); renderVoiceRows(rows);
     voicePanel?.refresh();
 }
-let voicePanel;
+// Declared with var on purpose: mountWandMenu() and installDock() run during module
+// evaluation, long before this line. `let` would leave the binding in its temporal
+// dead zone and every early `voicePanel?.open()` would throw ReferenceError.
+var voicePanel = null;
 voicePanel = installVoicePanel({
     context: ctx, settings, log, save,
     settingsHost: settingsHost,
+    adoptSettings: () => { settingsHost.hidden = false; renderSettingsMarkup(settingsHost); },
     library: () => voiceLibrary,
     setLibrary: next => { voiceLibrary = next; settings.voiceLibrary = next; save(); },
     refresh,
@@ -778,4 +795,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.6.2 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.6.3 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
