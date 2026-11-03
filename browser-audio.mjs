@@ -1,6 +1,54 @@
-// One-shot clone payload. Fish accepts raw reference bytes + the exact transcript
-// on each convert call and stores nothing server-side, so the request is
-// multipart and carries the audio again on every synthesis.
+// Minimal MessagePack encoder. POST /v1/tts only accepts application/json and
+// application/msgpack, and the reference audio is binary, so the one-shot clone
+// body has to be MessagePack. The official JS SDK does exactly this: it packs
+// {text, audio: Uint8Array} with @msgpack/msgpack and sends application/msgpack.
+function msgpackString(value) {
+    const bytes=new TextEncoder().encode(value), size=bytes.length;
+    const head=size<32 ? Uint8Array.of(0xa0 | size)
+        : size<256 ? Uint8Array.of(0xd9,size)
+        : size<65536 ? Uint8Array.of(0xda,size>>>8,size&0xff)
+        : Uint8Array.of(0xdb,size>>>24,(size>>>16)&0xff,(size>>>8)&0xff,size&0xff);
+    const out=new Uint8Array(head.length+size);out.set(head);out.set(bytes,head.length);return out;
+}
+function msgpackValue(value) {
+    if(typeof value==='string')return msgpackString(value);
+    if(value instanceof Uint8Array)return msgpackBinary(value);
+    if(typeof value==='boolean')return Uint8Array.of(value?0xc3:0xc2);
+    if(Array.isArray(value))return msgpackArray(value);
+    return msgpackMap(value);
+}
+function msgpackBinary(bytes) {
+    const size=bytes.length;
+    const head=size<256 ? Uint8Array.of(0xc4,size)
+        : size<65536 ? Uint8Array.of(0xc5,size>>>8,size&0xff)
+        : Uint8Array.of(0xc6,size>>>24,(size>>>16)&0xff,(size>>>8)&0xff,size&0xff);
+    const out=new Uint8Array(head.length+size);out.set(head);out.set(bytes,head.length);return out;
+}
+function msgpackArray(items) {
+    const parts=items.map(msgpackValue);
+    const head=parts.length<16 ? Uint8Array.of(0x90 | parts.length)
+        : parts.length<65536 ? Uint8Array.of(0xdc,parts.length>>>8,parts.length&0xff)
+        : Uint8Array.of(0xdd,parts.length>>>24,(parts.length>>>16)&0xff,(parts.length>>>8)&0xff,parts.length&0xff);
+    return concatBytes([head,...parts]);
+}
+function msgpackMap(object) {
+    const pairs=[];
+    for(const [key,value] of Object.entries(object)){
+        if(value===undefined || value===null)continue;
+        pairs.push(msgpackString(key),msgpackValue(value));
+    }
+    const count=pairs.length/2;
+    const head=count<16 ? Uint8Array.of(0x80 | count)
+        : Uint8Array.of(0xde,count>>>8,count&0xff);
+    return concatBytes([head,...pairs]);
+}
+function concatBytes(parts) {
+    const out=new Uint8Array(parts.reduce((sum,part)=>sum+part.length,0));
+    let offset=0;for(const part of parts){out.set(part,offset);offset+=part.length;}
+    return out;
+}
+// One-shot clone payload: the raw reference bytes plus the exact transcript ride
+// along on every convert call and Fish stores nothing server-side.
 export function ttsRequest(input, apiKey, refAudio = null) {
     const base=new URL(input.baseUrl || 'https://api.fish.audio');
     if(base.protocol!=='https:' || base.username || base.password || base.search || base.hash) throw Error('Base URL 必须为不含账号、查询参数的 HTTPS 地址');
@@ -14,14 +62,14 @@ export function ttsRequest(input, apiKey, refAudio = null) {
     const url='/proxy/'+new URL('v1/tts',base).href;
     if(refAudio){
         if(!refAudio.transcript?.trim()) throw Error('一次性克隆缺少逐字稿');
-        const body=new FormData();
-        body.append('text',input.text);
-        body.append('format','mp3');
-        body.append('latency','normal');
-        body.append('references',JSON.stringify([{audio:'reference',text:String(refAudio.transcript).trim()}]));
-        body.append('references[0].audio',refAudio.blob,refAudio.filename || 'reference.mp3');
-        // Content-Type is omitted on purpose: the browser must add the multipart boundary.
-        return {url,baseUrl:base.href,model,options:{method:'POST',headers:{Authorization:'Bearer '+apiKey.trim(),model},body}};
+        if(!refAudio.bytes?.length) throw Error('一次性克隆缺少参考音频字节');
+        const body=msgpackMap({
+            text:input.text,
+            format:'mp3',
+            latency:'normal',
+            references:[{audio:refAudio.bytes,text:String(refAudio.transcript).trim()}],
+        });
+        return {url,baseUrl:base.href,model,options:{method:'POST',headers:{Authorization:'Bearer '+apiKey.trim(),model,'Content-Type':'application/msgpack'},body}};
     }
     return {url,baseUrl:base.href,model,
         options:{method:'POST',headers:{Authorization:'Bearer '+apiKey.trim(),model,'Content-Type':'application/json'},body:JSON.stringify({text:input.text,reference_id:input.voice.trim(),format:'mp3',latency:'normal'})}};

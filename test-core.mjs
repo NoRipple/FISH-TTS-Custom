@@ -10,7 +10,7 @@ import { collectGroupNames, normalizeGroups, groupEntries, addGroup, renameGroup
 import { normalizeRefAudio, refAudioKey, formatBytes, pruneRefAudio, RefAudioStore, REF_AUDIO_LIMIT_BYTES } from './ref-audio.mjs';
 import { voicePreview } from './preview.mjs';
 import { SynthesisQueue, clampConcurrency, DEFAULT_CONCURRENCY, MAX_CONCURRENCY } from './synthesis.mjs';
-import { synthesizeBrowser, parseRetryAfter, MAX_RETRIES, MAX_RETRY_DELAY_MS } from './browser-audio.mjs';
+import { synthesizeBrowser, parseRetryAfter, MAX_RETRIES, MAX_RETRY_DELAY_MS, ttsRequest } from './browser-audio.mjs';
 import { lineText, displayText, patchTalkDom } from './inline.mjs';
 import { DEFAULTS } from './core.mjs';
 import { DEFAULT_GROUP_NAMES, DEFAULT_VOICE_GROUPS, defaultGroupFor } from './voice-presets.mjs';
@@ -959,5 +959,28 @@ t('音频被后端拒绝时能识别出来', () => {
     assert.equal(audioRejection(400, 'audio is not supported'), true);
     assert.equal(audioRejection(400, '当前模型不支持多模态'), true);
     assert.equal(audioRejection(500, 'internal'), false);
+});
+t('一次性克隆走 msgpack，音频字节原样放 references[0].audio', () => {
+    const req = ttsRequest({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro', voice: 'x', text: '你好' }, 'key',
+        { bytes: new Uint8Array([0xff, 0xd8, 0xff]), transcript: ' 参考 ' });
+    assert.equal(req.options.headers['Content-Type'], 'application/msgpack');
+    const body = req.options.body;
+    assert.ok(body instanceof Uint8Array, '请求体应是二进制');
+    assert.equal(body[0], 0x84, '顶层 map 应有四个字段');
+    const raw = Buffer.from(body);
+    assert.ok(raw.includes(Buffer.from('format')) && raw.includes(Buffer.from('mp3')), '字段名齐全');
+    assert.ok(raw.includes(Buffer.from('参考', 'utf8')), '逐字稿原文进体');
+    assert.ok(raw.indexOf(Buffer.from([0xc4, 0x03, 0xff, 0xd8, 0xff])) > 0, '音频以 bin8 形式带原始字节');
+});
+t('克隆缺逐字稿或缺音频字节要立刻报错', () => {
+    const base = { baseUrl: 'https://api.fish.audio', model: 's2.1-pro', voice: 'x', text: 'hi' };
+    assert.throws(() => ttsRequest(base, 'k', { bytes: new Uint8Array([1]) }), /逐字稿/);
+    assert.throws(() => ttsRequest(base, 'k', { transcript: 't' }), /音频字节/);
+    assert.throws(() => ttsRequest(base, 'k', { bytes: new Uint8Array(0), transcript: 't' }), /音频字节/);
+});
+t('普通音色仍走 JSON，不受克隆分支影响', () => {
+    const req = ttsRequest({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro', voice: 'abc', text: 'hi' }, 'k');
+    assert.equal(req.options.headers['Content-Type'], 'application/json');
+    assert.equal(JSON.parse(req.options.body).reference_id, 'abc');
 });
 console.log('\n全部通过：' + pass + ' 项');

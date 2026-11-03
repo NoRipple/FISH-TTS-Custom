@@ -40,7 +40,7 @@ export function renderSettingsMarkup(host) {
 }
 
 export const SETTINGS_MARKUP = `
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.7.2</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.7.3</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -285,7 +285,7 @@ async function loadRefAudio(voiceId) {
     if (!entry?.refAudio) return null;
     const record = await refStore.get(voiceId);
     if (!record?.blob) throw new Error(`参考音频已丢失（${entry.name || voiceId}）：请到“音色管理 → 快速克隆”重新导入`);
-    return { blob: record.blob, transcript: entry.refAudio.transcript, key: 'ref:' + voiceId };
+    return { blob: record.blob, bytes: new Uint8Array(await record.blob.arrayBuffer()), transcript: entry.refAudio.transcript, key: 'ref:' + voiceId };
 }
 function languageLabel(code) { return { zh: '中文', ja: '日语', en: '英语' }[code] || code; }
 // No declared language means "usable anywhere": most clones carry no language
@@ -879,4 +879,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.7.2 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.7.3 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
