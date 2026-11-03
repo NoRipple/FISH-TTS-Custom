@@ -700,4 +700,25 @@ t('用户删掉的作品组不会在下次启动时复活成员', () => {
     assert.equal(entry.group, '');
 });
 
+
+t('作品组按名字合并，已有安装也能补上新组且不重复', () => {
+    // Mirrors the startup merge: an install that already carries the old two-group
+    // list has to gain the rest, and running twice must not duplicate anything.
+    const merge = (current) => {
+        const next = Array.isArray(current) ? current.slice() : [];
+        for (const name of DEFAULT_GROUP_NAMES) if (!next.includes(name)) next.push(name);
+        return next;
+    };
+    const upgraded = merge(['偶像大师·闪耀色彩', '崩坏：星穹铁道']);
+    assert.equal(upgraded.length, DEFAULT_GROUP_NAMES.length);
+    assert.equal(new Set(upgraded).size, upgraded.length);
+    assert.deepEqual(merge(upgraded), upgraded);
+});
+t('用户自己建的组在合并后仍然保留', () => {
+    const next = ['我的私人组'];
+    for (const name of DEFAULT_GROUP_NAMES) if (!next.includes(name)) next.push(name);
+    assert.equal(next[0], '我的私人组');
+    assert.equal(next.length, DEFAULT_GROUP_NAMES.length + 1);
+});
+
 console.log('\n全部通过：' + pass + ' 项');

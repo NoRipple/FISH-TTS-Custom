@@ -88,7 +88,7 @@ export function installVoicePanel(deps) {
             const ids = bucket.entries.map(e => e.id);
             const folded = collapsed.has(bucket.name);
             if (folded) section.classList.add('fa-group-folded');
-            const toggle = el('button', { class: 'fa-group-toggle', type: 'button', title: folded ? '展开这个组' : '折叠这个组', text: folded ? '▸' : '▾' });
+            const toggle = el('button', { class: 'fa-group-toggle', type: 'button', title: folded ? '展开这个组' : '折叠这个组', text: folded ? '▶' : '▼' });
             toggle.addEventListener('click', () => {
                 if (collapsed.has(bucket.name)) collapsed.delete(bucket.name); else collapsed.add(bucket.name);
                 render();
@@ -123,7 +123,7 @@ export function installVoicePanel(deps) {
 
         const looseFolded = collapsed.has(UNGROUPED);
         const looseSection = el('div', { class: 'fa-group' + (looseFolded ? ' fa-group-folded' : '') });
-        const looseToggle = el('button', { class: 'fa-group-toggle', type: 'button', title: looseFolded ? '展开这个组' : '折叠这个组', text: looseFolded ? '▸' : '▾' });
+        const looseToggle = el('button', { class: 'fa-group-toggle', type: 'button', title: looseFolded ? '展开这个组' : '折叠这个组', text: looseFolded ? '▶' : '▼' });
         looseToggle.addEventListener('click', () => {
             if (collapsed.has(UNGROUPED)) collapsed.delete(UNGROUPED); else collapsed.add(UNGROUPED);
             render();

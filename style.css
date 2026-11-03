@@ -87,12 +87,12 @@
 .fa-voice-dialog .fa-voice-tabs button:hover { opacity:.9; background:#ffffff0d; }
 .fa-voice-dialog .fa-voice-tabs button.fa-tab-active { opacity:1; background:#68cab61f; color:#68cab6; border-color:#68cab64d; border-bottom:none; }
 .fa-voice-dialog .fa-voice-body { padding:14px 18px 20px; overflow:auto; flex:1; min-height:0; }
-.fa-voice-dialog .fa-hint { display:block; opacity:.6; font-size:12px; line-height:1.6; margin:4px 0 10px; }
+.fa-voice-dialog .fa-hint { display:block; opacity:.78; font-size:12px; line-height:1.6; margin:4px 0 10px; }
 .fa-voice-dialog .fa-empty { opacity:.6; font-size:12px; padding:14px; border:1px dashed #ffffff2a; border-radius:8px; text-align:center; margin:8px 0; }
 
 /* Form fields: one labelled block per row, full width, no cramped inline labels. */
 .fa-voice-dialog .fa-field { margin:0 0 12px; }
-.fa-voice-dialog .fa-field-label { display:block; margin:0 0 5px; font-size:12px; opacity:.78; }
+.fa-voice-dialog .fa-field-label { display:block; margin:0 0 5px; font-size:12px; font-weight:600; opacity:.9; }
 .fa-voice-dialog input:not([type=checkbox]):not([type=file]), .fa-voice-dialog select, .fa-voice-dialog textarea { width:100%; box-sizing:border-box; border-radius:8px; border:1px solid #ffffff26; background:#00000026; padding:7px 9px; color:inherit; font-size:13px; }
 .fa-voice-dialog input:not([type=checkbox]):not([type=file]):focus, .fa-voice-dialog select:focus, .fa-voice-dialog textarea:focus { outline:none; border-color:#68cab6aa; box-shadow:0 0 0 2px #68cab62e; }
 .fa-voice-dialog textarea { resize:vertical; line-height:1.6; font-family:inherit; }
@@ -104,7 +104,7 @@
 .fa-voice-dialog .fa-file-input { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
 .fa-voice-dialog .fa-file-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px; border:1px dashed #ffffff33; border-radius:10px; background:#ffffff08; }
 .fa-voice-dialog .fa-file-row button { flex:0 0 auto; }
-.fa-voice-dialog .fa-file-name { font-size:12px; opacity:.62; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 160px; }
+.fa-voice-dialog .fa-file-name { font-size:12px; opacity:.78; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 160px; }
 .fa-voice-dialog .fa-file-name.fa-file-picked { opacity:1; color:#68cab6; }
 
 /* Groups. The whole header toggles folding; the chevron mirrors the state. */
@@ -113,9 +113,10 @@
 .fa-voice-dialog .fa-group-folded .fa-group-head { border-bottom:none; }
 .fa-voice-dialog .fa-group-name { flex:1 1 auto; font-size:14px; cursor:pointer; }
 .fa-voice-dialog .fa-group-name:hover { color:#68cab6; }
-.fa-voice-dialog .fa-group-toggle { flex:0 0 auto !important; width:22px !important; min-width:22px !important; height:22px; padding:0 !important; line-height:20px !important; text-align:center; border-radius:6px; background:#ffffff12; border:1px solid #ffffff1f; opacity:.8; }
+.fa-voice-dialog .fa-group-toggle { flex:0 0 auto !important; width:22px !important; min-width:22px !important; height:22px; padding:0 !important; font-size:10px !important; line-height:20px !important; text-align:center; border-radius:6px; background:#ffffff12; border:1px solid #ffffff1f; opacity:.8; color:inherit; }
 .fa-voice-dialog .fa-group-toggle:hover { opacity:1; background:#ffffff1f; }
-.fa-voice-dialog .fa-group-count { opacity:.6; font-size:12px; }
+.fa-voice-dialog .fa-group-head:hover { background:#ffffff12; }
+.fa-voice-dialog .fa-group-count { opacity:.78; font-size:12px; }
 .fa-voice-dialog .fa-group .fa-lib-item:last-child, .fa-voice-dialog .fa-group .fa-empty:last-child { margin-bottom:0; }
 .fa-voice-dialog .fa-group > .fa-lib-item, .fa-voice-dialog .fa-group > .fa-empty { margin:0 10px; }
 
@@ -126,7 +127,7 @@
 .fa-voice-dialog .fa-lib-head { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .fa-voice-dialog .fa-lib-head input[type=checkbox] { flex:0 0 auto; width:auto; }
 .fa-voice-dialog .fa-lib-name { flex:1 1 140px; min-width:100px; width:auto; }
-.fa-voice-dialog .fa-lib-head small { opacity:.62; font-size:11px; white-space:nowrap; }
+.fa-voice-dialog .fa-lib-head small { opacity:.8; font-size:11px; white-space:nowrap; }
 .fa-voice-dialog .fa-search-name { flex:1 1 160px; min-width:120px; font-size:13px; }
 .fa-voice-dialog button { writing-mode:horizontal-tb !important; white-space:nowrap; height:auto; line-height:1.5; flex:0 0 auto; border-radius:8px; transition:background .15s ease, border-color .15s ease; }
 .fa-voice-dialog button:hover { border-color:#68cab688; }

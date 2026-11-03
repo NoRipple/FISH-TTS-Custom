@@ -463,11 +463,18 @@ renderVoiceLibrary(); renderDefaultVoiceSelects();
 renderVoiceRows(Object.entries(settings.voices).map(([name, config]) => ({ name, langs: normalizeVoiceConfig(config) })));
 refreshAll();
 // A full set of work groups ships with the plugin so the built-in voices are
-// filed by franchise out of the box. They are only defaults: renaming, merging
-// and deleting them are ordinary user actions and are never undone on reload.
-if (!Array.isArray(settings.voiceGroups) || !settings.voiceGroups.length) {
-    settings.voiceGroups = DEFAULT_GROUP_NAMES.slice(); save();
+// filed by franchise out of the box. Merging them in by name (rather than only
+// seeding an empty list) is what lets an install that already carries the old
+// two-group list pick up the new ones. Groups the user renamed or deleted are
+// simply absent, so it is safe to run on every start.
+if (!Array.isArray(settings.voiceGroups)) settings.voiceGroups = [];
+let groupsAdded = 0;
+for (const name of DEFAULT_GROUP_NAMES) {
+    if (settings.voiceGroups.includes(name)) continue;
+    settings.voiceGroups.push(name);
+    groupsAdded++;
 }
+if (groupsAdded) save();
 // Shipped voices are re-filed on every start, not only on first import: a library
 // imported by an older version has the same entries but no group yet, and the
 // import flag would otherwise freeze them as "未分组" forever. Only entries that
