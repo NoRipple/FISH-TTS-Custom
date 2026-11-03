@@ -8,6 +8,7 @@ import { voicePreview } from './preview.mjs';
 import { fetchVoiceLibrary, searchVoices, mergeSyncedLibrary, normalizeVoiceEntry } from './voice-library.mjs';
 import { RefAudioStore, normalizeRefAudio, formatBytes, pruneRefAudio } from './ref-audio.mjs';
 import { installVoicePanel } from './voice-panel.mjs';
+import { installDock } from './quick-dock.mjs';
 import { assignGroup } from './voice-groups.mjs';
 import { DEFAULT_GROUP_NAMES, defaultGroupFor } from './voice-presets.mjs';
 
@@ -33,7 +34,7 @@ let inline, libraryEntries = [];
 const root = document.createElement('section'); root.id = 'fish-dialogue';
 root.innerHTML = `
 <div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header" role="button" tabindex="0"><b>Fish 对话音声</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.6.0</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.6.1</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -130,6 +131,21 @@ function mountWandMenu() {
 mountWandMenu();
 const c0 = ctx();
 if (c0.eventTypes?.APP_READY) c0.eventSource.on(c0.eventTypes.APP_READY, mountWandMenu);
+
+// Chat-page dock: language cycle / plugin on-off / voice manager.
+const dock = installDock({
+    settings, save, log,
+    setLanguage: language => applyLanguage(language),
+    mountBook: language => mountBook(language),
+    unmountBook: () => unmountBook(),
+    syncRoster: () => syncRosterToBook(),
+    openVoices: () => voicePanel?.open('library'),
+    enabled: () => settings.enabled !== false,
+    setEnabled: on => { settings.enabled = on; },
+});
+function mountDock() { dock.mount(); }
+mountDock();
+if (c0.eventTypes?.APP_READY) c0.eventSource.on(c0.eventTypes.APP_READY, mountDock);
 
 function save() { ctx().saveSettingsDebounced(); }
 function log(level, text) {
@@ -327,6 +343,8 @@ voicePanel = installVoicePanel({
     search: ({ title }) => searchVoices({ baseUrl: settings.baseUrl, apiKey, title }),
     addClone,
     removeRef: id => refStore.delete(id),
+    renameRef: (fromId, toId) => refStore.renameRef(fromId, toId),
+    syncRoster: () => syncRosterToBook(),
     clearRefs: async () => { const usage = await refStore.usage(); await refStore.clear(); return usage.count; },
     refUsage: () => refStore.usage(),
 });
@@ -411,7 +429,8 @@ click('import-roster', async () => {
     log('INFO', `已导入内置音色 ${added} 个（已存在的仅补全信息）`);
     $('status').textContent = `内置音色导入完成，新增 ${added} 个`;
 });
-click('sync-roster', async () => {
+function pluginEnabled() { return settings.enabled !== false; }
+async function syncRosterToBook() {
     const w = await world(), name = settings.book;
     if (!w.world_names.includes(name)) throw new Error('请先安装世界书');
     const data = await w.loadWorldInfo(name);
@@ -425,8 +444,12 @@ click('sync-roster', async () => {
     if (!updated) throw new Error('世界书缺少 FA_FORMAT 语言条目，请先安装或升级世界书');
     await writeBook(name, data);
     const active = voiceLibrary.filter(e => e.active !== false).length;
-    log('INFO', `音色名册已写入世界书（${updated} 条 · 激活音色 ${active} 个）`);
     $('status').textContent = '音色名册已同步到世界书';
+    return `音色名册已写入世界书（${updated} 条 · 激活音色 ${active} 个）`;
+}
+click('sync-roster', async () => {
+    try { log('INFO', await syncRosterToBook()); }
+    catch (e) { log('ERROR', e.message); }
 });
 async function applyVoiceGuides() {
     try {
@@ -597,6 +620,7 @@ click('save-voices', () => {
     stopAll(); settings.voices = voices; save(); log('INFO', '角色绑定已保存');
 });
 function generateMessage(message) {
+    if (!pluginEnabled()) throw new Error('Fish 对话音声已关闭；请在聊天页右下角的开关里重新启用');
     const id=ctx().chat.indexOf(message);
     const items=parsed(message.mes,message.name || ctx().name2,message.extra?.fish_dialogue?.language || settings.language)
         .map(s=>({...s,messageRef:message,uiKey:id+':'+s.block,voice:voiceFor(s,settings),model:settings.model,baseUrl:settings.baseUrl}));
@@ -614,16 +638,40 @@ async function writeBook(name, data) {
     await ctx().eventSource.emit(ctx().eventTypes.WORLDINFO_UPDATED, name, data);
     w.reloadEditor(name);
 }
-async function applyLanguage() {
+async function applyLanguage(language = $('language').value) {
     const w = await world(), name = settings.book;
     if (!w.world_names.includes(name)) throw new Error('请先安装世界书');
     const data = await w.loadWorldInfo(name);
-    await writeBook(name, selectLanguage(data, $('language').value));
-    stopAll(); settings.language = $('language').value; save();
+    await writeBook(name, selectLanguage(data, language));
+    stopAll(); settings.language = language; save();
+    const select = $('language');
+    if (select) select.value = language;
     inline?.refresh();
     log('INFO', `世界书语言已切换为 ${settings.language}；对后续聊天生成生效`);
 }
-click('apply-language', applyLanguage);
+click('apply-language', () => applyLanguage());
+
+// Mount (or re-mount) the plugin's worldbook in SillyTavern's world-info list
+// without unselecting anything the user already had selected.
+async function mountBook(language = settings.language) {
+    const w = await world(), name = settings.book;
+    const options = [...document.querySelectorAll('#world_info option')];
+    const option = options.find(o => o.textContent === name);
+    if (!option) throw new Error('未找到世界书挂载控件；请在世界书页面手动选择它');
+    option.selected = true;
+    window.jQuery('#world_info').trigger('change');
+    settings.language = language; save();
+    inline?.refresh();
+    return name;
+}
+async function unmountBook() {
+    const name = settings.book;
+    const option = [...document.querySelectorAll('#world_info option')].find(o => o.textContent === name);
+    if (!option || !option.selected) return false;
+    option.selected = false;
+    window.jQuery('#world_info').trigger('change');
+    return true;
+}
 click('install-book', async () => {
     const w = await world(), name = settings.book;
     if (!name || /[\\/:*?"<>|]/.test(name)) throw new Error('请填写合法世界书名称');
@@ -720,4 +768,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.6.0 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.6.1 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');

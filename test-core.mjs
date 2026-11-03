@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { normalizeVoiceConfig, resolveVoice, voiceFor, VOICE_LANGUAGES, blocks, segmentFromBlock, findVoiceByToken, matchSpeakerVoice, buildRosterSection, replaceRosterBlock, ROSTER_MARKERS } from './core.mjs';
 import { normalizeLanguage, normalizeLanguages, normalizeVoiceEntry, mergeVoiceEntries, mergeSyncedLibrary, voiceLibraryRequest, voiceSearchRequest, searchVoices, fetchVoiceLibrary } from './voice-library.mjs';
+import { nextLanguage, clampPosition, LANG_LABEL, LANG_NAME } from './quick-dock.mjs';
 import { collectGroupNames, normalizeGroups, groupEntries, addGroup, renameGroup, deleteGroup, assignGroup, setActive, toggleAll, removeEntries, groupSummary } from './voice-groups.mjs';
 import { normalizeRefAudio, refAudioKey, formatBytes, pruneRefAudio, RefAudioStore, REF_AUDIO_LIMIT_BYTES } from './ref-audio.mjs';
 import { voicePreview } from './preview.mjs';
@@ -489,6 +490,37 @@ t('汇总统计激活数', () => {
     assert.equal(summary.groups[0].active, 1);
     assert.equal(summary.groups[1].total, 0);
     assert.equal(summary.ungrouped.total, 1);
+});
+
+console.log('\n— quick-dock: 语言循环与边界 —');
+t('中 → 日 → 英 → 中 循环', () => {
+    assert.equal(nextLanguage('zh'), 'ja');
+    assert.equal(nextLanguage('ja'), 'en');
+    assert.equal(nextLanguage('en'), 'zh');
+});
+t('未知语言回落成中文再前进', () => {
+    // ORDER[index < 0 ? 0 : ...] — an unknown value starts over at 中文, it does
+    // not skip ahead, so 'orig' lands on zh and a second click gets ja.
+    assert.equal(nextLanguage('orig'), 'zh');
+    assert.equal(nextLanguage(''), 'zh');
+    assert.equal(nextLanguage(nextLanguage('orig')), 'ja');
+});
+t('三种语言都有按钮与提示文案', () => {
+    for (const lang of ['zh', 'ja', 'en']) {
+        assert.equal(typeof LANG_LABEL[lang], 'string');
+        assert.equal(typeof LANG_NAME[lang], 'string');
+    }
+    assert.deepEqual(Object.values(LANG_LABEL), ['中', '日', '英']);
+});
+t('悬浮窗位置被夹在视口内', () => {
+    assert.deepEqual(clampPosition(-40, -40, 120, 50, 1000, 800), { x: 8, y: 8 });
+    assert.deepEqual(clampPosition(5000, 5000, 120, 50, 1000, 800), { x: 872, y: 742 });
+    assert.deepEqual(clampPosition(100, 200, 120, 50, 1000, 800), { x: 100, y: 200 });
+});
+t('视口比悬浮窗还小时不会算出负坐标', () => {
+    const pos = clampPosition(10, 10, 400, 300, 200, 100);
+    assert.equal(pos.x >= 8, true);
+    assert.equal(pos.y >= 8, true);
 });
 
 console.log('\n— voice-library: 搜索与同步合并 —');

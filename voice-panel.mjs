@@ -29,7 +29,7 @@ export function installVoicePanel(deps) {
     // group the user folded away back open.
     const collapsed = new Set();
     // The confirm/ask overlays live in the top layer next to the dialog.
-    let askDialog = null, confirmDialog = null;
+    let askDialog = null, confirmDialog = null, formDialog = null;
 
     function groups() { return collectGroupNames(library(), Array.isArray(settings.voiceGroups) ? settings.voiceGroups : []); }
     function persistGroups(next) { settings.voiceGroups = next; save(); }
@@ -54,6 +54,81 @@ export function installVoicePanel(deps) {
     function quiet(label, onClick, extra = '') {
         return el('button', { class: 'fa-menu_button fa-quiet ' + extra, type: 'button', text: label, onclick: onClick });
     }
+    // A themed replacement for prompt() that carries several labelled fields at
+    // once. `fields` is [{ key, label, value, multiline, hint }]; resolves to an
+    // object keyed the same way, or null when cancelled.
+    function askForm(title, fields, okLabel = '保存') {
+        return new Promise(resolve => {
+            formDialog?.remove();
+            const inputs = {};
+            const body = el('form', { method: 'dialog', class: 'fa-subdialog-body' });
+            const head = el('div', { class: 'fa-subdialog-head' }, el('h4', { text: title }),
+                quiet('取消', () => formDialog.close()));
+            body.append(head);
+            for (const field of fields) {
+                const control = field.multiline
+                    ? el('textarea', { class: 'fa-input', rows: '4' })
+                    : el('input', { class: 'fa-input', type: 'text' });
+                control.value = field.value ?? '';
+                inputs[field.key] = control;
+                body.append(el('div', { class: 'fa-field' },
+                    el('label', { class: 'fa-field-label', text: field.label }), control,
+                    field.hint ? hint(field.hint) : null));
+            }
+            let settled = false;
+            body.append(el('div', { class: 'fa-actions fa-actions-end' },
+                button(okLabel, () => {
+                    settled = true;
+                    const out = {};
+                    for (const key of Object.keys(inputs)) out[key] = inputs[key].value;
+                    resolve(out);
+                    formDialog.close();
+                }, 'fa-primary')));
+            formDialog = el('dialog', { class: 'fa-subdialog fa-subdialog-wide', id: 'fa-subdialog-form' }, body);
+            formDialog.addEventListener('close', () => { if (!settled) resolve(null); formDialog.remove(); });
+            document.body.append(formDialog);
+            formDialog.showModal();
+            inputs[fields[0].key]?.focus();
+            inputs[fields[0].key]?.select?.();
+        });
+    }
+
+    // Group choice for the search tab. Typing a group name by hand was the
+    // complaint; the plugin already knows every group, so offer them as a list
+    // and keep a free-text box only as the "make a new group" escape hatch.
+    function pickGroup(names, voiceName) {
+        return new Promise(resolve => {
+            formDialog?.remove();
+            const select = el('select', { class: 'fa-input fa-select', id: 'fa-pick-group' },
+                el('option', { value: '', text: UNGROUPED }),
+                ...names.map(name => el('option', { value: name, text: name })));
+            const fresh = el('input', { class: 'fa-input', type: 'text', placeholder: '或者输入一个新组名' });
+            let settled = false;
+            const body = el('form', { method: 'dialog', class: 'fa-subdialog-body' },
+                el('div', { class: 'fa-subdialog-head' }, el('h4', { text: `把「${voiceName}」放到哪个组？` }),
+                    quiet('取消', () => formDialog.close())),
+                el('div', { class: 'fa-field' }, el('label', { class: 'fa-field-label', text: '已有分组' }), select),
+                el('div', { class: 'fa-field' }, el('label', { class: 'fa-field-label', text: '新建分组' }), fresh,
+                    hint('留空就是不加新组；选了上面的分组会忽略这里。')),
+                el('div', { class: 'fa-actions fa-actions-end' },
+                    button('确定', () => {
+                        const typed = fresh.value.trim();
+                        const chosen = typed || select.value;
+                        if (typed && !names.includes(typed)) {
+                            try { persistGroups(addGroup(settings.voiceGroups || [], typed)); }
+                            catch (e) { log('ERROR', e.message); return; }
+                        }
+                        settled = true; resolve(chosen); formDialog.close();
+                    }, 'fa-primary')));
+            formDialog = el('dialog', { class: 'fa-subdialog', id: 'fa-subdialog-pick' }, body);
+            formDialog.addEventListener('close', () => { if (!settled) resolve(null); formDialog.remove(); });
+            document.body.append(formDialog);
+            formDialog.showModal();
+            select.focus();
+        });
+    }
+
+    const renameRef = deps.renameRef || (async () => { throw new Error('当前构建不支持迁移参考音频'); });
     function hint(text) { return el('small', { class: 'fa-hint', text }); }
     function icon(name) { return el('i', { class: 'fa-solid ' + name, 'aria-hidden': 'true' }); }
 
@@ -102,8 +177,18 @@ export function installVoicePanel(deps) {
         const title = el('div', { class: 'fa-head-titles' },
             el('span', { class: 'fa-head-kicker', text: 'FISH TTS' }),
             el('h3', { class: 'fa-head-title', text: '音色管理' }));
+        const syncBtn = deps.syncRoster
+            ? el('button', {
+                class: 'fa-menu_button fa-head-sync', type: 'button', title: '把当前音色库写入世界书的三语言名册条目',
+                onclick: async () => {
+                    try { const msg = await deps.syncRoster(); log('INFO', msg); }
+                    catch (e) { log('ERROR', e.message); }
+                },
+            }, icon('fa-rotate'), el('span', { text: '同步名册到世界书' }))
+            : null;
         const head = el('div', { class: 'fa-voice-dialog-head' }, title,
-            el('button', { class: 'fa-menu_button fa-head-close', type: 'button', title: '关闭（Esc）', text: '×', onclick: () => dialog.close() }));
+            el('div', { class: 'fa-head-tools' }, syncBtn,
+                el('button', { class: 'fa-menu_button fa-head-close', type: 'button', title: '关闭（Esc）', text: '×', onclick: () => dialog.close() })));
         const tabs = el('div', { class: 'fa-voice-tabs', role: 'tablist' });
         for (const [key, label, blurb] of TABS) {
             const node = el('button', { class: 'fa-menu_button fa-tab', type: 'button', 'data-tab': key, title: blurb,
@@ -142,24 +227,21 @@ export function installVoicePanel(deps) {
 
         // Toolbar: a search field, a selection readout and the bulk actions that
         // only make sense once something is ticked.
-        const searchBox = el('input', { class: 'fa-input fa-vsearch', type: 'search', placeholder: '按名字筛选…', 'aria-label': '按名字筛选音色' });
+        // Filtering fires on submit (Enter or the button), never per keystroke:
+        // re-rendering while typing stole the caret and made the field unusable.
+        const searchBox = el('input', { class: 'fa-input fa-vsearch', type: 'search', placeholder: '按名字筛选，回车执行…', 'aria-label': '按名字筛选音色' });
         searchBox.value = filter;
-        searchBox.addEventListener('input', () => { filter = searchBox.value.trim(); render(); });
-        // Re-rendering on every keystroke would drop the caret, so the caret is put
-        // back where it was once the new toolbar is in the document.
-        if (filter) {
-            queueMicrotask(() => {
-                const box = dialog.querySelector('.fa-vsearch');
-                if (!box) return;
-                box.focus();
-                box.setSelectionRange(box.value.length, box.value.length);
-            });
-        }
+        const runFilter = () => { filter = searchBox.value.trim(); selection = new Set(); render(); };
+        searchBox.addEventListener('keydown', event => {
+            if (event.key === 'Enter') { event.preventDefault(); runFilter(); }
+            if (event.key === 'Escape') { event.stopPropagation(); searchBox.value = ''; }
+        });
+        const clearFilter = quiet('清空', () => { filter = ''; selection = new Set(); render(); });
         const meta = el('div', { class: 'fa-toolbar-meta' },
             el('span', { class: 'fa-stat', text: `共 ${total} 个音色` }),
             el('span', { class: 'fa-stat', text: `已激活 ${activeCount}` }),
             shown ? el('span', { class: 'fa-stat fa-stat-on', text: `已勾选 ${shown}` }) : null);
-        host.append(el('div', { class: 'fa-toolbar' }, searchBox, meta));
+        host.append(el('div', { class: 'fa-toolbar' }, searchBox, button('筛选', runFilter), filter ? clearFilter : null, meta));
 
         if (shown) {
             const target = el('select', { class: 'fa-input fa-select', id: 'fa-bulk-target' },
@@ -264,6 +346,34 @@ export function installVoicePanel(deps) {
             entry.active === false ? el('span', { class: 'fa-vtag fa-vtag-off', text: '未激活' }) : null);
         const tools = el('div', { class: 'fa-row-tools' },
             quiet('试听', () => { try { preview(entry); } catch (e) { log('ERROR', e.message); } }),
+            quiet('编辑', async () => {
+                const answer = await askForm(`编辑「${entry.name || entry.id}」`, [
+                    { key: 'name', label: '音色名称', value: entry.name || entry.id },
+                    { key: 'id', label: '音色 ID', value: entry.id, hint: '改成别的音频 ID 等于换成另一个音色；克隆音色的 ID 与本地参考音频绑定，改 ID 后需要重新导入音频。' },
+                    { key: 'guide', label: '音色描述 / 使用指南', value: entry.guide || '', multiline: true,
+                      hint: '这段说明会写进世界书名册，帮助模型挑对音色。' },
+                ]);
+                if (!answer) return;
+                const nextName = answer.name.trim() || entry.id;
+                const nextId = answer.id.trim();
+                if (!nextId) { log('ERROR', '音色 ID 不能为空'); return; }
+                if (nextId !== entry.id && list.some(e => e && e !== entry && e.id === nextId)) {
+                    log('ERROR', `音色 ID「${nextId}」已被占用`); return;
+                }
+                entry.name = nextName;
+                entry.guide = answer.guide.trim();
+                if (nextId !== entry.id) {
+                    if (entry.refAudio) {
+                        // The audio blob is keyed by the old id; move it so the clone
+                        // keeps working instead of silently losing its reference.
+                        try { await renameRef(entry.id, nextId); }
+                        catch (e) { log('ERROR', '参考音频迁移失败：' + e.message); return; }
+                    }
+                    entry.id = nextId;
+                }
+                setLibrary(list); refresh(); render();
+                log('INFO', `已更新音色「${entry.name}」`);
+            }),
             entry.refAudio ? quiet('逐字稿', async () => {
                 const next = await ask('逐字稿（必须与音频里说的一字不差，含标点）', entry.refAudio.transcript || '', true);
                 if (next == null) return;
@@ -320,12 +430,8 @@ export function installVoicePanel(deps) {
                         quiet('试听', () => { try { preview({ id: item.id, name: item.name, languages: item.languages }); } catch (e) { log('ERROR', e.message); } }),
                         button('添加', async () => {
                             const names = groups();
-                            const answer = await ask(`把「${item.name}」放到哪个组？`, '', false);
-                            if (answer == null) return;
-                            const target = answer.trim();
-                            if (target && !names.includes(target)) {
-                                try { persistGroups(addGroup(settings.voiceGroups || [], target)); } catch (e) { log('ERROR', e.message); return; }
-                            }
+                            const target = await pickGroup(names, item.name);
+                            if (target == null) return;
                             const list = library();
                             const existing = list.find(entry => entry.id === item.id);
                             if (existing) existing.group = target;

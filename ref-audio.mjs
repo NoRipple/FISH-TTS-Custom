@@ -104,6 +104,28 @@ export class RefAudioStore {
     count() {
         return this.run('readonly', (store, done) => { store.count().onsuccess = event => done(event.target.result || 0); });
     }
+    // The blob is keyed by the voice id, so renaming a cloned voice has to move
+    // its audio too, or the clone silently loses its reference.
+    async renameRef(fromId, toId) {
+        if (!fromId || !toId || fromId === toId) return false;
+        const db = await this.open();
+        const fromKey = refAudioKey(fromId), toKey = refAudioKey(toId);
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE, 'readwrite');
+            const store = tx.objectStore(STORE);
+            const read = store.get(fromKey);
+            read.onsuccess = () => {
+                const record = read.result;
+                if (!record) { resolve(false); return; }
+                store.put({ ...record, id: toId }, toKey);
+                store.delete(fromKey);
+            };
+            read.onerror = () => reject(read.error || new Error('读取参考音频失败'));
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error || new Error('迁移参考音频失败'));
+        });
+    }
+
     async usage() {
         const keys = await this.keys();
         let bytes = 0;

@@ -1,4 +1,4 @@
-export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], voiceGroups: [], concurrency: 10, auto: false, fallback: false, showLines: false, autoVoice: true, autoMulti: true, rosterImported: 0 });
+export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], voiceGroups: [], concurrency: 10, auto: false, fallback: false, showLines: false, autoVoice: true, autoMulti: true, rosterImported: 0, enabled: true });
 export const VOICE_LANGUAGES = Object.freeze(['zh', 'ja', 'en']);
 export const ENGINES = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1', 'drama-3-preview'];
 
