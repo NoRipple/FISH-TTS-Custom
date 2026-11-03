@@ -40,7 +40,7 @@ export function renderSettingsMarkup(host) {
 }
 
 export const SETTINGS_MARKUP = `
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.7.0</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.7.1</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -882,4 +882,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.7.0 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.7.1 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
