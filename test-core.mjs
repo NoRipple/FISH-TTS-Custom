@@ -6,6 +6,8 @@ import { normalizeLanguage, normalizeLanguages, normalizeVoiceEntry, mergeVoiceE
 import { voicePreview } from './preview.mjs';
 import { SynthesisQueue, clampConcurrency, DEFAULT_CONCURRENCY, MAX_CONCURRENCY } from './synthesis.mjs';
 import { synthesizeBrowser, parseRetryAfter, MAX_RETRIES, MAX_RETRY_DELAY_MS } from './browser-audio.mjs';
+import { lineText, displayText, patchTalkDom } from './inline.mjs';
+import { DEFAULTS } from './core.mjs';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok  ' + name); };
@@ -393,5 +395,16 @@ t('preview 标记为 true 以便按钮切换文案', () => assert.equal(voicePre
 console.log('— 常量 —');
 t('VOICE_LANGUAGES 为 zh/ja/en', () => assert.deepEqual([...VOICE_LANGUAGES], ['zh', 'ja', 'en']));
 t('默认并发与上限', () => { assert.equal(DEFAULT_CONCURRENCY, 10); assert.equal(MAX_CONCURRENCY, 10); });
+
+console.log('— 聊天页台词显示 —');
+t('lineText 生成完整引号对', () => assert.equal(lineText({ speaker: '爱丽丝', text: '你好呀' }), '爱丽丝：「你好呀」'));
+t('lineText 无角色名时省略前缀', () => assert.equal(lineText({ speaker: '  ', text: '你好呀' }), '「你好呀」'));
+t('lineText 保留声音标签原样', () => assert.equal(lineText({ speaker: '鲍勃', text: '[happy] 走吧' }), '鲍勃：「[happy] 走吧」'));
+t('displayText 仍把语音段替换为占位符', () => {
+    const raw = '开头<Talk-Emo>爱丽丝|zh|"你好呀"</Talk-Emo>结尾';
+    assert.equal(displayText(raw, 'zh', raw).includes('你好呀'), false);
+});
+t('showLines 默认关闭', () => assert.equal(DEFAULTS.showLines, false));
+t('patchTalkDom 接受 showLines 参数', () => assert.equal(patchTalkDom.length, 3));
 
 console.log('\n全部通过：' + pass + ' 项');

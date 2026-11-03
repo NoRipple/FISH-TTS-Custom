@@ -1,4 +1,4 @@
-export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], concurrency: 10, auto: false, fallback: false, blockEnabled: false, blockedNames: '', autoVoice: true, autoMulti: true, rosterImported: 0 });
+export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], concurrency: 10, auto: false, fallback: false, showLines: false, autoVoice: true, autoMulti: true, rosterImported: 0 });
 export const VOICE_LANGUAGES = Object.freeze(['zh', 'ja', 'en']);
 export const ENGINES = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1', 'drama-3-preview'];
 
@@ -7,12 +7,6 @@ export function stripExcluded(text) {
     return String(text ?? '').replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g, mask)
         .replace(/<(think|thinking|reasoning)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, mask)
         .replace(/<(script|style|pre|code|iframe|html)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, mask);
-}
-
-export function isBlocked(speaker, settings) {
-    if (!settings.blockEnabled) return false;
-    const names = String(settings.blockedNames || '').split(/[\n,，]/).map(x => x.trim()).filter(Boolean);
-    return names.includes(String(speaker || '').trim());
 }
 
 // <Talk-Emo>speaker|lang|"text"</Talk-Emo> — the legacy form — or the extended

@@ -1,4 +1,12 @@
-import { blocks, dialogueRecords, segmentFromBlock, isBlocked, stripExcluded } from './core.mjs';
+import { blocks, dialogueRecords, segmentFromBlock, stripExcluded } from './core.mjs';
+
+// A readable line is `角色名：「台词」`, complete in the text node itself so a
+// copy-paste or a re-render never shows an unbalanced quote.
+export function lineText(segment) {
+    const speaker = String(segment.speaker || '').trim();
+    const text = String(segment.text ?? '');
+    return speaker ? `${speaker}：「${text}」` : `「${text}」`;
+}
 
 function replacement(b, language, ordinal = b.block) {
     let value = '';
@@ -26,10 +34,11 @@ export function displayText(text, language, original = text) {
 export function tokenHTML(html) {
     return html.replace(/⟦FAP(\d+|WAIT|BAD)⟧/g,(_,id) => {
         if (id === 'WAIT' || id === 'BAD') return `<span class="fa-inline-note">${id === 'WAIT' ? '语音准备中…' : '语音格式错误'}</span>`;
-        return `<span class="fa-inline" data-fa-block="${id}"><button type="button" class="fa-line-play" aria-label="播放这一句">▶ 播放</button><button type="button" class="fa-line-replay" aria-label="重播这一句">↺</button><span class="fa-line-state">第 ${Number(id) + 1} 段</span></span>`;
+        return `<span class="fa-inline" data-fa-block="${id}"><button type="button" class="fa-line-play" aria-label="播放这一句">▶ 播放</button><button type="button" class="fa-line-replay" aria-label="重播这一句">↺</button><span class="fa-line-state"></span></span>`;
     });
 }
-function fragment(text, doc) {
+// showLines renders the spoken line inline, together with the play controls.
+function fragment(text, doc, records, showLines) {
     const out = doc.createDocumentFragment(); let cursor = 0;
     for (const m of text.matchAll(/⟦FAP(\d+|WAIT|BAD)⟧/g)) {
         out.append(doc.createTextNode(text.slice(cursor,m.index))); cursor = m.index + m[0].length;
@@ -42,6 +51,14 @@ function fragment(text, doc) {
                 const button = doc.createElement('button'); button.type='button'; button.className='fa-line-'+name; button.textContent=label; button.setAttribute('aria-label',aria); span.append(button);
             }
             const state = doc.createElement('span'); state.className='fa-line-state'; span.append(state);
+            const record = showLines ? records?.[Number(m[1])] : null;
+            const segment = record && segmentFromBlock(record, 'orig');
+            if (segment) {
+                span.classList.add('fa-line-shown');
+                const line = doc.createElement('span'); line.className='fa-line-text';
+                line.textContent = lineText(segment);
+                span.append(line);
+            }
         }
         out.append(span);
     }
@@ -52,7 +69,7 @@ const safeTags = new Set(['P','SPAN','EM','STRONG','B','I','BR','Q','S','DEL','T
 
 // Surgery on only the matched payload. Never call messageFormatting again, never
 // assign a message container's innerHTML, and never remove/reinsert helper iframes.
-export function patchTalkDom(target, records, language) {
+export function patchTalkDom(target, records, language, showLines = false) {
     const doc = target.ownerDocument;
     let cursor = 0;
     for (const element of [...target.querySelectorAll('talk-emo')]) {
@@ -64,7 +81,7 @@ export function patchTalkDom(target, records, language) {
         cursor = index + 1;
         // A talk-emo tag containing another app's DOM is malformed; don't destroy it.
         if ([...element.querySelectorAll('*')].some(node => !safeTags.has(node.tagName))) continue;
-        element.replaceWith(fragment(replacement(records[index],language,index),doc));
+        element.replaceWith(fragment(replacement(records[index],language,index),doc,records,showLines));
     }
     const pieces = []; let text = '';
     function walk(node) {
@@ -100,12 +117,12 @@ export function patchTalkDom(target, records, language) {
         const range = doc.createRange(); range.setStart(start.node,b.start-start.start); range.setEnd(end.node,b.end-end.start);
         const copied = range.cloneContents();
         if (copied.querySelector(protectedSelector) || [...copied.querySelectorAll('*')].some(n => !safeTags.has(n.tagName))) continue;
-        range.deleteContents(); range.insertNode(fragment(replacement(records[index],language,index),doc));
+        range.deleteContents(); range.insertNode(fragment(replacement(records[index],language,index),doc,records,showLines));
     }
     // Host may have stripped generated button tags, leaving our plain placeholders.
     const walker = doc.createTreeWalker(target,4); const tokenNodes = [];
     while (walker.nextNode()) if (!walker.currentNode.parentElement?.closest(protectedSelector) && /⟦FAP(?:\d+|WAIT|BAD)⟧/.test(walker.currentNode.data)) tokenNodes.push(walker.currentNode);
-    for (const node of tokenNodes) node.replaceWith(fragment(node.data,doc));
+    for (const node of tokenNodes) node.replaceWith(fragment(node.data,doc,records,showLines));
 }
 
 // If a regex or a helper owns all of the visible content, keep controls outside
@@ -148,23 +165,25 @@ export function installInline({ context, settings, play, pause, resume, current,
     }
     function render() {
         if (disconnected) return;
+        const showLines = settings.showLines === true;
         for (const element of document.querySelectorAll('#chat .mes[mesid]')) {
             const id = Number(element.getAttribute('mesid')), message = context().chat[id], target = element.querySelector('.mes_text');
             if (!target || !message || message.is_user || message.is_system || target.querySelector('textarea')) continue;
             const records = recordsFor(message);
-            patchTalkDom(target,records,languageFor(message));
+            patchTalkDom(target,records,languageFor(message),showLines);
             reconcileControls(target.parentElement,target,records,languageFor(message));
             for (const control of element.querySelectorAll('.fa-inline[data-fa-block]')) {
                 const b = records[Number(control.dataset.faBlock)]; if (!b) continue;
                 const button=control.querySelector('.fa-line-play'), replay=control.querySelector('.fa-line-replay'), detail=control.querySelector('.fa-line-state');
                 if (!button || !replay || !detail) continue;
-                const muted = isBlocked(b.speaker,settings), state=current(), active=state.uiKey===`${id}:${b.block}`;
+                const state=current(), active=state.uiKey===`${id}:${b.block}`;
                 const p = progress(`${id}:${b.block}`);
-                button.disabled=muted; replay.disabled=muted;
-                const label=muted ? '已屏蔽' : active && state.running ? (state.phase==='generating'?'等待音频…':state.paused?'▶ 继续':'❚❚ 暂停') : '▶ 播放';
+                const label=active && state.running ? (state.phase==='generating'?'等待音频…':state.paused?'▶ 继续':'❚❚ 暂停') : '▶ 播放';
                 if (button.textContent!==label) button.textContent=label;
                 const suffix=p ? ({queued:'待合成',requesting:'请求中',receiving:'接收中',saving:'保存中',ready:'已就绪',failed:'失败',canceled:'已取消'}[p.status] || '') : '';
-                const value=`${b.speaker} · ${b.block+1}${suffix ? ' · '+suffix : ''}`;
+                // When the line itself is shown, the detail chip only carries timing
+                // state; repeating the speaker next to the text would read twice.
+                const value=showLines ? (suffix || `${b.block+1}`) : `${b.speaker} · ${b.block+1}${suffix ? ' · '+suffix : ''}`;
                 if(detail.textContent!==value) detail.textContent=value;
                 control.classList.toggle('fa-line-active',Boolean(active && state.running));
             }
@@ -181,7 +200,7 @@ export function installInline({ context, settings, play, pause, resume, current,
         const element=button.closest('.mes[mesid]'),control=button.closest('.fa-inline'); if(!element || !control)return;
         event.preventDefault();event.stopPropagation();
         const id=Number(element.getAttribute('mesid')),ordinal=Number(control.dataset.faBlock),b=recordsFor(context().chat[id])[ordinal];
-        if(!b?.valid || isBlocked(b.speaker,settings))return;
+        if(!b?.valid)return;
         const state=current();
         try {
             if(button.classList.contains('fa-line-play') && state.uiKey===`${id}:${ordinal}` && state.running){

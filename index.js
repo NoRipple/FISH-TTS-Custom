@@ -1,5 +1,5 @@
 import { BrowserAudioStore, synthesizeBrowser } from './browser-audio.mjs';
-import { DEFAULTS, VOICE_LANGUAGES, extract, voiceFor, resolveVoice, normalizeVoiceConfig, selectLanguage, upgradeWorldbook, blocks, dialogueRecords, segmentFromBlock, isBlocked, buildRosterSection, replaceRosterBlock, BOOK_LANGUAGES } from './core.mjs';
+import { DEFAULTS, VOICE_LANGUAGES, extract, voiceFor, resolveVoice, normalizeVoiceConfig, selectLanguage, upgradeWorldbook, blocks, dialogueRecords, segmentFromBlock, buildRosterSection, replaceRosterBlock, BOOK_LANGUAGES } from './core.mjs';
 import { SpeechQueue } from './player.mjs';
 import { SynthesisQueue } from './synthesis.mjs';
 import { installInline } from './inline.mjs';
@@ -28,7 +28,7 @@ let inline, libraryEntries = [];
 const root = document.createElement('section'); root.id = 'fish-dialogue';
 root.innerHTML = `
 <div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header" role="button" tabindex="0"><b>Fish 对话音声</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content">
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.5.2</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.5.3</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -36,8 +36,11 @@ root.innerHTML = `
 <label>聊天文本序号（留空为最新回复）<input id="fa-message" type="number" min="0" class="text_pole"></label>
 <div class="fa-sub"><div class="fa-subhead">默认音色（按语言）</div>
 <div class="fa-row"><button id="fa-preview-default" type="button">试听默认音色</button></div>
-<small class="fa-hint">与聊天页输入框上方的音色开关是同一份设置，改任意一处另一处同步。</small>
+<small class="fa-hint">聊天页输入框上方的音色选择器已移除，默认音色只在这里设置。</small>
 <div id="fa-default"></div></div>
+<div class="fa-sub"><div class="fa-subhead">聊天页显示</div>
+<label class="checkbox_label"><input id="fa-show-lines" type="checkbox"> 在前端显示台词</label>
+<small class="fa-hint">开启后，语音段在聊天页按“角色名：「台词」”显示，并带同行的播放按钮；关闭时只显示按钮和序号。仅影响显示，不改动聊天原文。</small></div>
 <div class="fa-sub"><div class="fa-subhead">自动匹配策略</div>
 <label class="checkbox_label"><input id="fa-auto-voice" type="checkbox"> 自动选择音色</label>
 <small class="fa-hint">未手动绑定的角色，优先用模型第三字段的音色名，其次按角色名匹配音色库。</small>
@@ -55,9 +58,6 @@ root.innerHTML = `
 <div class="fa-sub"><div class="fa-subhead">角色绑定</div>
 <div id="fa-voices"></div>
 <div class="fa-row"><button id="fa-add">添加角色</button><button id="fa-save-voices">保存角色绑定</button></div>
-<label class="checkbox_label"><input id="fa-block-enabled" type="checkbox"> 启用角色屏蔽</label>
-<label>屏蔽角色名字（每行一个，精确匹配）<textarea id="fa-block-names" class="text_pole" rows="2" placeholder="例如：屏蔽角色名字"></textarea></label>
-<small class="fa-hint">屏蔽只影响语音，中文对白照常显示。修改后立即停止当前队列。</small>
 <small class="fa-hint">角色名须与世界书输出完全一致；某语言留空即使用默认音色。</small>
 </div>
 </details>
@@ -196,7 +196,6 @@ const queue = new SpeechQueue({
         inline?.schedule();
     },
     async synthesize(item, signal) {
-        if (isBlocked(item.speaker, settings)) throw new Error('该角色已屏蔽');
         if (item.libraryId) return api('audio', {id:item.libraryId}, signal);
         item.task ||= generator.submit(item);
         return generator.take(item.task, signal);
@@ -215,7 +214,7 @@ function setDefaultVoice(language, value) {
     if (value) next[language] = value; else delete next[language];
     settings.defaultVoice = next;
     save(); stopAll();
-    renderDefaultVoiceSelects(); renderChatSwitcher();
+    renderDefaultVoiceSelects();
 }
 function fillSelect(select, language, current) {
     const options = [{ value: '', label: '— 默认 —' }], seen = new Set(['']);
@@ -325,7 +324,7 @@ function renderVoiceRows(rows) { $('voices').replaceChildren(); for (const row o
 // adding or removing a library voice never discards in-progress edits.
 function refreshVoiceSelectors() {
     const rows = collectVoiceRows();
-    renderVoiceLibrary(); renderDefaultVoiceSelects(); renderVoiceRows(rows); renderChatSwitcher();
+    renderVoiceLibrary(); renderDefaultVoiceSelects(); renderVoiceRows(rows);
 }
 click('library-sync', async () => {
     const entries = await fetchVoiceLibrary({ baseUrl: settings.baseUrl, apiKey });
@@ -409,28 +408,6 @@ click('preview-default', () => {
     const item = voicePreview({ voice, language, settings });
     queue.stop(); queue.enqueue([item]);
 });
-const chatSwitcher = document.createElement('div');
-chatSwitcher.id = 'fa-chat-switcher';
-function mountChatSwitcher() {
-    const anchor = document.querySelector('#send_form');
-    if (!anchor || chatSwitcher.isConnected) return;
-    const label = document.createElement('span'); label.className = 'fa-switch-label'; label.textContent = '音色';
-    chatSwitcher.replaceChildren(label);
-    for (const language of VOICE_LANGUAGES) {
-        const select = document.createElement('select'); select.className = 'text_pole fa-switch-select';
-        select.dataset.lang = language; select.title = languageLabel(language) + '音色（与设置面板同步）';
-        select.addEventListener('change', () => setDefaultVoice(language, select.value));
-        chatSwitcher.append(select);
-    }
-    anchor.before(chatSwitcher);
-}
-function renderChatSwitcher() {
-    if (!chatSwitcher.isConnected) return;
-    const config = normalizeVoiceConfig(settings.defaultVoice);
-    for (const select of chatSwitcher.querySelectorAll('select')) {
-        fillSelect(select, select.dataset.lang, config[select.dataset.lang] || config.default || '');
-    }
-}
 // Older builds kept a per-chat override. Fold it into the global default once,
 // otherwise merging the two controls would silently change the user's voice.
 (function adoptLegacyChatVoice() {
@@ -447,7 +424,6 @@ function renderChatSwitcher() {
 })();
 renderVoiceLibrary(); renderDefaultVoiceSelects();
 renderVoiceRows(Object.entries(settings.voices).map(([name, config]) => ({ name, langs: normalizeVoiceConfig(config) })));
-mountChatSwitcher(); renderChatSwitcher();
 (async function bootstrapRoster() {
     if ((settings.rosterImported || 0) < 2) {
         try { importRosterEntries(await loadRoster()); settings.rosterImported = 2; save(); log('INFO', '已自动导入内置音色'); }
@@ -456,8 +432,6 @@ mountChatSwitcher(); renderChatSwitcher();
     await applyVoiceGuides();
 })();
 async function synthesizeRaw(item, signal, update) {
-        if (isBlocked(item.speaker, settings)) throw new Error('该角色已屏蔽，不会向 API 发送对白');
-        
         // Message identities are persisted only when audio is requested, not during rendering.
         if (item.messageRef) {
             const c = ctx();
@@ -505,12 +479,10 @@ function parsed(text, speaker, language = settings.language) {
     const result = extract(text, { ...settings, language, speaker });
     result.warnings.forEach(w => log('WARN', w));
     log('INFO', `提取到 ${result.segments.length} 段 ${settings.language} 对话`);
-    const allowed = result.segments.filter(s => !isBlocked(s.speaker, settings));
-    if (allowed.length !== result.segments.length) log('INFO', `角色屏蔽：跳过 ${result.segments.length - allowed.length} 段，不发送 API`);
-    return allowed;
+    return result.segments;
 }
 function enqueue(segments, replace = false, eager = false) {
-    const items = segments.filter(s => !isBlocked(s.speaker, settings)).map(s => ({ ...s, voice: voiceFor(s, settings), model: settings.model, baseUrl: settings.baseUrl }));
+    const items = segments.map(s => ({ ...s, voice: voiceFor(s, settings), model: settings.model, baseUrl: settings.baseUrl }));
     if (items.some(x => !x.voice)) throw new Error('缺少音色：请先在“音色库”同步或添加音色，再在“角色音色”或聊天页选择');
     if (!items.length) return;
     if (queue.items.length + items.length > 100 && !replace) throw new Error('等待队列超过 100 句，请先播放或停止');
@@ -525,12 +497,13 @@ function bind(id, name, checkbox = false) {
         settings[name] = value; save();
         if (['baseUrl', 'model'].includes(name)) stopAll();
         if (name === 'auto' && !value) stopAll();
-        if (name === 'blockEnabled' || name === 'blockedNames' || name === 'fallback' || name === 'autoVoice' || name === 'autoMulti') { stopAll(); inline?.schedule(); }
+        if (name === 'fallback' || name === 'autoVoice' || name === 'autoMulti') { stopAll(); inline?.schedule(); }
+        if (name === 'showLines') inline?.refresh();
     });
 }
 bind('auto', 'auto', true); bind('fallback', 'fallback', true);
-bind('block-enabled', 'blockEnabled', true); bind('block-names', 'blockedNames');
 bind('auto-voice', 'autoVoice', true); bind('auto-multi', 'autoMulti', true);
+bind('show-lines', 'showLines', true);
 if (typeof settings.model !== 'string' || !settings.model.trim()) { settings.model=DEFAULTS.model; save(); }
 bind('base', 'baseUrl'); bind('model', 'model'); bind('book', 'book');
 $('language').value = settings.language;
@@ -644,7 +617,7 @@ inline = installInline({ context: ctx, settings, log, progress: key => generator
     async play(id, ordinal) {
         const message = ctx().chat[id];
         const segment = segmentFromBlock(dialogueRecords(message.mes,{...settings,speaker:message.name || ctx().name2})[ordinal], message.extra?.fish_dialogue?.language || settings.language);
-        if (!segment || isBlocked(segment.speaker, settings)) return;
+        if (!segment) return;
         enqueue([{ ...segment, messageRef: message, uiKey: `${id}:${ordinal}` }], true);
     },
 });
@@ -668,9 +641,9 @@ c.eventSource.on(c.eventTypes.CHARACTER_MESSAGE_RENDERED, async (id, type) => {
     try { generateMessage(message); } catch (e) { log('ERROR', e.message); }
 });
 for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSAGE_EDITED', 'MESSAGE_UPDATED']) {
-    if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { stopAll(); seen.clear(); inline.schedule(); renderChatSwitcher(); });
+    if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { stopAll(); seen.clear(); inline.schedule(); });
 }
-for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); mountChatSwitcher(); renderChatSwitcher(); });
+for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.5.2 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.5.3 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');

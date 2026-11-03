@@ -6,6 +6,11 @@
 #chat .fa-line-active { background: #68cab626; border-color: #68cab6; }
 #chat .fa-inline-note { font-size: 11px; opacity: .5; padding-left: 5px; }
 #chat .fa-line-dock { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; clear: both; }
+/* "在前端显示台词"：一行内先给台词，播放/重播按钮跟随其后。 */
+#chat .fa-inline.fa-line-shown { border-radius: 10px; align-items: baseline; }
+#chat .fa-inline .fa-line-text { user-select: text; cursor: text; font-size: inherit; line-height: 1.6; max-width: 100%; word-break: break-word; }
+#chat .fa-inline.fa-line-shown .fa-line-state:empty { display: none; }
+#chat .fa-inline.fa-line-shown .fa-line-state { flex-basis: 100%; }
 #fish-dialogue label { display:block; margin:8px 0; }
 #fish-dialogue label.checkbox_label { display:flex; align-items:center; gap:6px; }
 #fish-dialogue input:not([type=checkbox]), #fish-dialogue textarea, #fish-dialogue select { width:100%; box-sizing:border-box; }
@@ -55,11 +60,6 @@
 #fish-dialogue .fa-lang-select span { flex:0 0 3em; opacity:.75; }
 #fish-dialogue .fa-lang-select select { flex:1; min-width:0; width:auto; }
 #fish-dialogue .fa-voice select { flex:1; min-width:80px; width:auto; }
-
-/* Chat-page switcher */
-#fa-chat-switcher { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 6px; padding:0 2px; }
-#fa-chat-switcher .fa-switch-label { opacity:.7; font-size:12px; }
-#fa-chat-switcher .fa-switch-select { flex:1 1 120px; min-width:0; width:auto; font-size:12px; }
 
 /* ---- 1.5.0 设置面板重组：状态条 / 分区 / 徽标 / 提示 ---- */
 #fish-dialogue .fa-statusbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:2px 0 10px; padding:6px; position:sticky; top:0; z-index:3; background:var(--SmartThemeBlurTintColor,rgba(0,0,0,.35)); backdrop-filter:blur(6px); border:1px solid #ffffff14; border-radius:10px; }
