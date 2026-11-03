@@ -2,7 +2,7 @@
 //   node test-core.mjs
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { audioFormat, mimeFor, languageHints, asrEndpoint, asrRequest, asrText, asrErrorText, transcribeAudio, describePrompt, cleanDescription, needsDescription, chatRequest, chatText, audioRejection, fillQueue, ASR_MODEL, ASR_HOST, DESCRIBE_EXAMPLE } from './ai-voice.mjs';
+import { audioFormat, mimeFor, languageHints, asrEndpoint, asrRequest, asrText, asrErrorText, transcribeAudio, describePrompt, cleanDescription, needsDescription, normalizeEndpoint, modelsEndpoint, describeRequest, listModels, isNetworkFailure, withProxy, chatText, audioRejection, fillQueue, ASR_MODEL, ASR_HOST, DESCRIBE_EXAMPLE } from './ai-voice.mjs';
 import { normalizeVoiceConfig, resolveVoice, voiceFor, VOICE_LANGUAGES, blocks, segmentFromBlock, findVoiceByToken, matchSpeakerVoice, buildRosterSection, replaceRosterBlock, ROSTER_MARKERS } from './core.mjs';
 import { normalizeLanguage, normalizeLanguages, normalizeVoiceEntry, mergeVoiceEntries, mergeSyncedLibrary, voiceLibraryRequest, voiceSearchRequest, searchVoices, fetchVoiceLibrary } from './voice-library.mjs';
 import { nextLanguage, clampPosition, LANG_LABEL, LANG_NAME, defaultPosition, MAIN_SIZE } from './quick-dock.mjs';
@@ -899,22 +899,54 @@ t('批量补充只挑空描述的条目', () => {
     assert.equal(fillQueue(list, { overwrite: true }).length, 3);
     assert.equal(fillQueue(null).length, 0);
 });
-t('聊天请求走酒馆自己的转发端点，不带密钥', () => {
-    assert.throws(() => chatRequest({ messages: [], source: 'openai' }), /没有内容/);
-    assert.throws(() => chatRequest({ messages: [{ role: 'user', content: 'x' }], source: '' }), /聊天补全来源/);
-    const request = chatRequest({ messages: [{ role: 'user', content: 'x' }], model: 'm', source: 'openai' });
-    assert.equal(request.url, '/api/backends/chat-completions/generate');
-    const body = JSON.parse(request.options.body);
-    assert.equal(body.chat_completion_source, 'openai');
-    assert.equal(body.model, 'm');
-    assert.equal(body.messages[0].content, 'x');
-    assert.ok(!JSON.stringify(body).includes('Authorization'));
+t('接口地址会自动补全成 chat/completions', () => {
+    assert.equal(normalizeEndpoint('https://api.example.com/v1'), 'https://api.example.com/v1/chat/completions');
+    assert.equal(normalizeEndpoint('https://api.example.com'), 'https://api.example.com/v1/chat/completions');
+    assert.equal(normalizeEndpoint('api.example.com/v1/'), 'https://api.example.com/v1/chat/completions');
+    assert.equal(normalizeEndpoint('https://api.example.com/v1/chat/completions'), 'https://api.example.com/v1/chat/completions');
+    assert.throws(() => normalizeEndpoint(''), /还没有填音色描述的接口地址/);
+    assert.equal(modelsEndpoint('https://api.example.com/v1'), 'https://api.example.com/v1/models');
 });
-t('聊天请求带上酒馆的请求头（含 CSRF），否则后端 403', () => {
-    const request = chatRequest({ messages: [{ role: 'user', content: 'x' }], source: 'openai', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'abc' } });
-    assert.equal(request.options.headers['X-CSRF-Token'], 'abc');
-    const plain = chatRequest({ messages: [{ role: 'user', content: 'x' }], source: 'openai' });
-    assert.equal(plain.options.headers['Content-Type'], 'application/json');
+t('描述请求直连用户填的接口，带 Bearer 密钥', () => {
+    assert.throws(() => describeRequest({ messages: [], model: 'm', baseUrl: 'x' }), /没有内容/);
+    assert.throws(() => describeRequest({ messages: [{ role: 'user', content: 'x' }], model: '', baseUrl: 'https://a.com/v1' }), /还没有选模型/);
+    const request = describeRequest({ messages: [{ role: 'user', content: 'x' }], model: 'gpt', baseUrl: 'https://a.com/v1', apiKey: 'sk-1' });
+    assert.equal(request.url, 'https://a.com/v1/chat/completions');
+    assert.equal(request.options.headers.Authorization, 'Bearer sk-1');
+    const body = JSON.parse(request.options.body);
+    assert.equal(body.model, 'gpt');
+    assert.equal(body.messages[0].content, 'x');
+    const noKey = describeRequest({ messages: [{ role: 'user', content: 'x' }], model: 'gpt', baseUrl: 'https://a.com/v1' });
+    assert.ok(!('Authorization' in noKey.options.headers));
+});
+t('模型列表从 /models 解析，兼容两种外壳', async () => {
+    const fake = body => async () => ({ ok: true, status: 200, text: async () => JSON.stringify(body) });
+    const a = await listModels({ baseUrl: 'https://a.com/v1', apiKey: 'k', fetcher: fake({ data: [{ id: 'm1' }, { id: 'm2' }, { id: 'm1' }] }) });
+    assert.deepEqual(a.models, ['m1', 'm2']);
+    const b = await listModels({ baseUrl: 'https://a.com/v1', fetcher: fake(['x', 'y']) });
+    assert.deepEqual(b.models, ['x', 'y']);
+    const bad = async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ error: { message: 'bad key' } }) });
+    await assert.rejects(() => listModels({ baseUrl: 'https://a.com/v1', fetcher: bad }), /401.*bad key/);
+});
+t('跨域失败时改走酒馆代理，其他错误不重试', async () => {
+    assert.equal(isNetworkFailure(new TypeError('Failed to fetch')), true);
+    assert.equal(isNetworkFailure(new Error('HTTP 401')), false);
+    assert.equal(withProxy('http://127.0.0.1:3425/v1/models'), '/proxy/http://127.0.0.1:3425/v1/models');
+    const seen = [];
+    const flaky = async url => {
+        seen.push(url);
+        if (!url.startsWith('/proxy/')) throw new TypeError('Failed to fetch');
+        return { ok: true, status: 200, text: async () => JSON.stringify({ data: [{ id: 'm1' }] }) };
+    };
+    const result = await listModels({ baseUrl: 'http://x/v1', fetcher: flaky });
+    assert.deepEqual(result.models, ['m1']);
+    assert.equal(seen.length, 2);
+    const httpFail = async () => ({ ok: false, status: 500, text: async () => '{}' });
+    assert.equal(isNetworkFailure(new Error('HTTP 500')), false);
+    const seen2 = [];
+    const onlyHttp = async url => { seen2.push(url); return httpFail(); };
+    await assert.rejects(() => listModels({ baseUrl: 'http://x/v1', fetcher: onlyHttp }), /500/);
+    assert.equal(seen2.length, 1);
 });
 t('聊天响应取文字，字符串和数组都认', () => {
     assert.equal(chatText({ choices: [{ message: { content: '一段描述' } }] }), '一段描述');

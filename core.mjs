@@ -1,4 +1,4 @@
-export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], voiceGroups: [], asrHost: 'llm-eh6pmwfsrdyx9qxw.cn-beijing.maas.aliyuncs.com', asrModel: 'qwen-audio-3.1-asr-flash', asrKey: '', concurrency: 10, auto: false, fallback: false, showLines: false, autoVoice: true, autoMulti: true, rosterImported: 0, enabled: true });
+export const DEFAULTS = Object.freeze({ baseUrl: 'https://api.fish.audio', model: 's2.1-pro-free', language: 'zh', book: 'Fish-Dialogue', defaultVoice: '', voices: {}, voiceLibrary: [], voiceGroups: [], asrHost: 'llm-eh6pmwfsrdyx9qxw.cn-beijing.maas.aliyuncs.com', asrModel: 'qwen-audio-3.1-asr-flash', asrKey: '', describeBaseUrl: '', describeModel: '', describeKey: '', concurrency: 10, auto: false, fallback: false, showLines: false, autoVoice: true, autoMulti: true, rosterImported: 0, enabled: true });
 export const VOICE_LANGUAGES = Object.freeze(['zh', 'ja', 'en']);
 export const ENGINES = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1', 'drama-3-preview'];
 

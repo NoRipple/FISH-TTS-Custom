@@ -152,13 +152,13 @@ export function installVoicePanel(deps) {
     }
     // Which model answers the description prompt. Read every time so switching the
     // chat completion source in SillyTavern takes effect on the next click.
+    // The description endpoint is entered by the user in Settings, so the panel just
+    // forwards what is stored there — no SillyTavern chat settings involved.
     function describeTarget() {
-        const source = context();
         return {
-            model: source.model || '',
-            source: source.chatCompletionSettings?.chat_completion_source || 'openai',
-            reverseProxy: source.chatCompletionSettings?.reverse_proxy || '',
-            customUrl: source.chatCompletionSettings?.custom_url || '',
+            model: settings.describeModel || '',
+            apiKey: settings.describeKey || '',
+            baseUrl: settings.describeBaseUrl || '',
         };
     }
     // Preview audio for the description prompt. Null is fine: the prompt is text
@@ -169,12 +169,13 @@ export function installVoicePanel(deps) {
         catch (e) { log('WARN', '试听音频生成失败，改用文字推断：' + e.message); return null; }
     }
     async function describeOne(entry) {
-        if (!describe) { rowErrors.set(entry.id, '当前版本没有接通「酒馆默认模型」'); render(); return; }
+        if (!describe) { rowErrors.set(entry.id, '当前版本没有接通音色描述接口'); render(); return; }
         describingId = entry.id;
         rowErrors.delete(entry.id);
         render();
         try {
             const audio = await clipFor(entry);
+            if (!audio) throw new Error('拿不到试听音频，请确认 Fish 的 API Key 已经填好');
             const result = await describe({
                 name: entry.name || entry.id,
                 group: entry.group || '',
@@ -396,6 +397,7 @@ export function installVoicePanel(deps) {
             if (String(entry.guide || '').trim()) continue;
             try {
                 const audio = await clipFor(entry);
+                if (!audio) throw new Error('拿不到试听音频，请确认 Fish 的 API Key 已经填好');
                 const result = await describe({
                     name: entry.name || entry.id, group: entry.group || '', guide: '',
                     audio, settings: describeTarget(),

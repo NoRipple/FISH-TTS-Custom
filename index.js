@@ -11,7 +11,7 @@ import { installVoicePanel } from './voice-panel.mjs';
 import { installDock } from './quick-dock.mjs';
 import { assignGroup } from './voice-groups.mjs';
 import { DEFAULT_GROUP_NAMES, defaultGroupFor } from './voice-presets.mjs';
-import { transcribeAudio, describeVoice, audioFormat } from './ai-voice.mjs';
+import { transcribeAudio, describeVoice, audioFormat, listModels } from './ai-voice.mjs';
 
 const ctx = () => SillyTavern.getContext();
 const KEY = 'fish_dialogue_v1';
@@ -40,7 +40,7 @@ export function renderSettingsMarkup(host) {
 }
 
 export const SETTINGS_MARKUP = `
-<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.7.1</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
+<div class="fa-statusbar" role="status" aria-live="polite"><span class="fa-chip fa-chip-ver">v1.7.2</span><span class="fa-chip" id="fa-status">就绪</span><span class="fa-chip" id="fa-chip-active" title="已激活、会写入名册的音色数量">音色 —</span><span class="fa-chip" id="fa-chip-default" title="按语言的默认音色填充情况">默认音色 —</span></div>
 <details open class="fa-sec"><summary><i class="fa-solid fa-bolt"></i><span>快速开始</span></summary>
 <label class="checkbox_label"><input id="fa-auto" type="checkbox"> 新回复自动配音</label>
 <small class="fa-hint">按顺序生成对白并保存到本地，不自动播放。</small>
@@ -104,9 +104,14 @@ export const SETTINGS_MARKUP = `
 <button id="fa-key-save">保存API KEY</button><small class="fa-hint">保存到账户设置；留空保存可清除。账户设置备份可能包含此密钥。</small>
 <label>语音引擎<input id="fa-model" class="text_pole" type="text" placeholder="s2.1-pro-free"></label>
 <small class="fa-hint">需启用酒馆 enableCorsProxy 并重启；用试听验证连接。</small>
-<div class="fa-sub"><div class="fa-subhead">音色描述（用酒馆默认模型）</div>
-<small class="fa-hint">「✨ 生成描述」和「一键补充」直接用酒馆当前选中的聊天补全来源、Base URL 和密钥，插件不保存这些凭据。当前来源会在点击时读取，换模型后立刻生效。</small>
-<div id="fa-model-hint" class="fa-row"><small class="fa-hint">当前来源：读取中…</small></div>
+<div class="fa-sub"><div class="fa-subhead">音色描述（OpenAI 兼容接口）</div>
+<small class="fa-hint">「✨ 生成描述」和「一键补充」把试听音频和提示词发给下面这个接口。填服务地址后点「获取模型列表」自动拉取模型名，也可以直接手填。地址形如 https://api.example.com/v1；不写 /v1 会自动补全。密钥保存在账户设置里，账户备份可能包含它。</small>
+<label>接口地址<input id="fa-describe-base" class="text_pole" type="text" placeholder="https://api.example.com/v1"></label>
+<div class="fa-row"><button id="fa-describe-models">获取模型列表</button><small id="fa-describe-models-hint" class="fa-hint"></small></div>
+<label>模型<input id="fa-describe-model" class="text_pole" type="text" list="fa-describe-models" placeholder="点上面的按钮拉取，或直接手填"></label>
+<datalist id="fa-describe-models"></datalist>
+<label>API Key<input id="fa-describe-key" class="text_pole" type="password" autocomplete="off"></label>
+<div class="fa-row"><button id="fa-describe-save">保存音色描述设置</button><small id="fa-describe-hint" class="fa-hint"></small></div>
 </div>
 <div class="fa-sub"><div class="fa-subhead">逐字稿识别（阿里百炼）</div>
 <label>百炼中转地址<input id="fa-asr-host" class="text_pole" type="text" placeholder="llm-xxxx.cn-beijing.maas.aliyuncs.com"></label>
@@ -363,24 +368,7 @@ function renderVoiceRows(rows) { $('voices')?.replaceChildren(); for (const row 
 function refreshAll() {
     const rows = collectVoiceRows();
     renderVoiceLibrary(); renderDefaultVoiceSelects(); renderVoiceRows(rows);
-    renderModelHint();
     voicePanel?.refresh();
-}
-// Which chat backend the description buttons will use. Re-read on every rebuild
-// because the user can switch model inside SillyTavern at any time; showing the
-// answer up front beats a confusing failure after the click.
-function renderModelHint() {
-    const node = $('model-hint');
-    if (!node) return;
-    const source = ctx();
-    const name = source.chatCompletionSettings?.chat_completion_source || '';
-    const model = source.model || '';
-    const small = document.createElement('small');
-    small.className = 'fa-hint';
-    small.textContent = (name || model)
-        ? `当前来源：${name || '（未设置）'} · 模型 ${model || '（跟随来源默认）'}`
-        : '还没有选择聊天补全来源，生成描述会失败；请先在酒馆的 API 设置里选一个支持多模态的模型。';
-    node.replaceChildren(small);
 }
 // Declared with var on purpose: mountWandMenu() and installDock() run during module
 // evaluation, long before this line. `let` would leave the binding in its temporal
@@ -397,7 +385,7 @@ voicePanel = installVoicePanel({
     search: ({ title }) => searchVoices({ baseUrl: settings.baseUrl, apiKey, title }),
     addClone,
     transcribe: ({ file, language }) => transcribeRefAudio({ file, language }),
-    describe: args => describeVoice({ ...args, log, settings: { ...(args.settings || {}), headers: hostHeaders() } }),
+    describe: args => describeVoice({ ...args, log }),
     previewAudio: entry => previewAudioBlob(entry),
     removeRef: id => refStore.delete(id),
     renameRef: (fromId, toId) => refStore.renameRef(fromId, toId),
@@ -431,18 +419,6 @@ function playPreview(entry) {
 }
 // The clone tab's transcript button. Only the transport lives here; the request
 // shape and every error message come from ai-voice.mjs.
-// The host only accepts its own CSRF token on same-origin POSTs, so every
-// backend call has to borrow the page's header bag instead of a bare Content-Type.
-function hostHeaders() {
-    try {
-        const get = ctx()?.getRequestHeaders;
-        if (typeof get === 'function') return get();
-    } catch (e) {
-        log('WARN', '读取酒馆请求头失败，改用默认请求头：' + (e && e.message ? e.message : e));
-    }
-    return { 'Content-Type': 'application/json' };
-}
-
 async function transcribeRefAudio({ file, language }) {
     if (!file) throw new Error('请先选择参考音频文件');
     const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'audio/mpeg' });
@@ -713,6 +689,27 @@ if (typeof settings.model !== 'string' || !settings.model.trim()) { settings.mod
 bind('base', 'baseUrl'); bind('model', 'model'); bind('book', 'book');
 $('language').value = settings.language;
 $('key').value=apiKey;
+$('describe-base').value=settings.describeBaseUrl || '';
+$('describe-model').value=settings.describeModel || '';
+$('describe-key').value=settings.describeKey || '';
+bind('describe-base','describeBaseUrl'); bind('describe-model','describeModel');
+$('describe-key').addEventListener('input', () => { settings.describeKey = $('describe-key').value.trim(); });
+click('describe-save',()=>{settings.describeKey=$('describe-key').value.trim();settings.describeBaseUrl=$('describe-base').value.trim();settings.describeModel=$('describe-model').value.trim();save();log('INFO',settings.describeBaseUrl?'音色描述设置已保存':'已清除音色描述设置');const h=$('describe-hint');if(h)h.textContent=settings.describeBaseUrl?'已保存：'+settings.describeBaseUrl:'已清除';});
+click('describe-models',async()=>{
+    const hint=$('describe-models-hint');
+    const base=$('describe-base').value.trim();
+    const key=$('describe-key').value.trim();
+    if(!base){if(hint)hint.textContent='先填接口地址';return;}
+    settings.describeBaseUrl=base;settings.describeKey=key;save();
+    if(hint)hint.textContent='正在拉取…';
+    try{
+        const {models}=await listModels({baseUrl:base,apiKey:key});
+        const list=$('describe-models');
+        if(list){list.replaceChildren(...models.map(id=>{const o=document.createElement('option');o.value=id;return o;}));}
+        if(!$('describe-model').value && models.length){settings.describeModel=models[0];$('describe-model').value=models[0];save();}
+        if(hint)hint.textContent=`拉到 ${models.length} 个模型`+(models.length?'，已填第一个，可下拉换':'');
+    }catch(e){if(hint)hint.textContent=e.message;log('ERROR','获取模型列表失败：'+e.message);}
+});
 $('asr-host').value=settings.asrHost || DEFAULTS.asrHost;
 $('asr-model').value=settings.asrModel || DEFAULTS.asrModel;
 $('asr-key').value=settings.asrKey || '';
@@ -882,4 +879,4 @@ for (const event of ['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSA
 for (const event of ['MORE_MESSAGES_LOADED', 'CHAT_LOADED', 'APP_READY']) if (c.eventTypes[event]) c.eventSource.on(c.eventTypes[event], () => { inline.schedule(); });
 $('audio').addEventListener('pause', () => inline.schedule());
 window.addEventListener('pagehide', () => { stopAll(); clearInterval(progressTimer); inline.disconnect(); apiKey = ''; });
-log('INFO', '1.7.1 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');
+log('INFO', '1.7.2 已加载；已启用第三字段音色协议，请点“升级世界书”和“同步名册到世界书”。');

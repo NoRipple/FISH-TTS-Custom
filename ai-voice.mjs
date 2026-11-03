@@ -171,19 +171,79 @@ export function needsDescription(entry) {
     return Boolean(entry) && !String(entry.guide || '').trim();
 }
 
-// The frontend never sees the key: it only tells the host which backend and which
-// endpoint to use. An empty customUrl means "the address the user configured".
-export function chatRequest({ messages, model, source = 'openai', reverseProxy = '', customUrl = '', maxTokens = 400, headers = null }) {
+// Browsers block a plain fetch to a host that does not send CORS headers. Local
+// gateways (LM Studio, one-api, a self-hosted proxy) usually do not, so a network
+// level failure is retried through SillyTavern's own /proxy/, which forwards the
+// request server-side. Anything that already reached the server is never retried.
+export function isNetworkFailure(error) {
+    const message = String(error && error.message ? error.message : error || '');
+    return /Failed to fetch|NetworkError|Load failed|ERR_NETWORK|ERR_CONNECTION/i.test(message);
+}
+
+export function withProxy(url) {
+    const target = String(url || '');
+    if (!target) return target;
+    return '/proxy/' + target;
+}
+
+export async function fetchWithProxyFallback(url, options = {}, { fetcher = fetch, signal = null, log = () => {} } = {}) {
+    try {
+        return await fetcher(url, { ...options, signal });
+    } catch (error) {
+        if (!isNetworkFailure(error)) throw error;
+        log('WARN', '直连失败，改走酒馆代理重试：' + (error && error.message ? error.message : error));
+        return fetcher(withProxy(url), { ...options, signal });
+    }
+}
+
+// The description endpoint is whatever OpenAI-compatible service the user typed
+// into the settings: no host proxy, no chat-source juggling. A bare host grows the
+// usual /v1/chat/completions, a full .../chat/completions is used as-is.
+export function normalizeEndpoint(baseUrl = '') {
+    const raw = String(baseUrl || '').trim();
+    if (!raw) throw new Error('还没有填音色描述的接口地址，请到「设置 → AI 音色描述」里填');
+    let url = raw;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    url = url.replace(/\/+$/, '');
+    if (/\/chat\/completions$/i.test(url)) return url;
+    if (/\/v1$/i.test(url)) return url + '/chat/completions';
+    return url + '/v1/chat/completions';
+}
+
+export function modelsEndpoint(baseUrl = '') {
+    const chatUrl = normalizeEndpoint(baseUrl);
+    return chatUrl.replace(/\/chat\/completions$/i, '/models');
+}
+
+export function describeRequest({ messages, model, apiKey = '', baseUrl = '', maxTokens = 800 }) {
     if (!Array.isArray(messages) || !messages.length) throw new Error('聊天请求没有内容');
-    if (!source) throw new Error('还没有在酒馆里选择聊天补全来源，无法使用酒馆默认模型');
-    const body = { chat_completion_source: source, messages, max_tokens: maxTokens };
-    if (model) body.model = model;
-    if (reverseProxy) body.reverse_proxy = reverseProxy;
-    if (customUrl) body.custom_url = customUrl;
-    // The host rejects a bare POST with 403: it wants its own CSRF token, which only
-    // the page's getRequestHeaders() knows. The caller passes that in.
-    const requestHeaders = headers || { 'Content-Type': 'application/json' };
-    return { url: '/api/backends/chat-completions/generate', options: { method: 'POST', headers: requestHeaders, body: JSON.stringify(body) } };
+    const name = String(model || '').trim();
+    if (!name) throw new Error('还没有选模型，请先点「获取模型列表」或手动填模型名');
+    const headers = { 'Content-Type': 'application/json' };
+    const key = String(apiKey || '').trim();
+    if (key) headers.Authorization = 'Bearer ' + key;
+    const body = { model: name, messages, max_tokens: maxTokens };
+    return { url: normalizeEndpoint(baseUrl), options: { method: 'POST', headers, body: JSON.stringify(body) } };
+}
+
+// GET /models is the cheapest way to know the key and the address are right, so the
+// panel asks for the list first and only then asks the user to pick a name.
+export async function listModels({ baseUrl = '', apiKey = '', fetcher = fetch, signal = null, log = () => {} }) {
+    const url = modelsEndpoint(baseUrl);
+    const headers = {};
+    const key = String(apiKey || '').trim();
+    if (key) headers.Authorization = 'Bearer ' + key;
+    const response = await fetchWithProxyFallback(url, { method: 'GET', headers }, { fetcher, signal, log });
+    const text = await response.text();
+    let payload = null;
+    try { payload = JSON.parse(text); } catch { payload = null; }
+    if (!response.ok) {
+        const detail = payload?.error?.message || payload?.message || text.slice(0, 160);
+        throw new Error('获取模型列表失败：HTTP ' + response.status + (detail ? ' ' + detail : ''));
+    }
+    const list = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.models) ? payload.models : Array.isArray(payload) ? payload : [];
+    const ids = list.map(item => (typeof item === 'string' ? item : item?.id || item?.name || '')).filter(Boolean);
+    return { url, models: Array.from(new Set(ids)) };
 }
 
 export function audioContentPart({ base64, format = 'mp3' }) {
@@ -210,35 +270,47 @@ export function audioRejection(status, message) {
 export async function describeVoice({ name, group = '', guide = '', audio = null, settings = {}, fetcher = fetch, signal = null, log = () => {} }) {
     const prompt = describePrompt({ name, group, guide });
     const target = {
-        model: settings.model || '', source: settings.source || 'openai',
-        reverseProxy: settings.reverseProxy || '', customUrl: settings.customUrl || '',
-        headers: settings.headers || null,
+        model: String(settings.model || '').trim(),
+        apiKey: String(settings.apiKey || '').trim(),
+        baseUrl: String(settings.baseUrl || '').trim(),
     };
     const attempt = async withAudio => {
         const parts = [{ type: 'text', text: prompt }];
         if (withAudio && audio) parts.push(audioContentPart(audio));
-        const request = chatRequest({ messages: [{ role: 'user', content: parts }], ...target });
-        return fetcher(request.url, { ...request.options, signal });
+        const request = describeRequest({ messages: [{ role: 'user', content: parts }], ...target });
+        return fetchWithProxyFallback(request.url, request.options, { fetcher, signal, log });
+    };
+    const readError = async response => {
+        let detail = '';
+        try {
+            const payload = await response.json();
+            detail = payload?.error?.message || payload?.message || JSON.stringify(payload).slice(0, 200);
+        } catch { detail = ''; }
+        return detail;
     };
     let response = await attempt(Boolean(audio));
     if (!response.ok && audio) {
-        let detail = '';
-        try { const payload = await response.json(); detail = payload?.error?.message || payload?.message || JSON.stringify(payload).slice(0, 200); } catch { detail = ''; }
+        const detail = await readError(response);
+        // A model that only does text should still get a second chance without the clip.
         if (audioRejection(response.status, detail)) {
-            log('WARN', '酒馆当前模型不接受音频输入，改为只用名称和分组推断：' + detail);
+            log('WARN', '当前模型不接受音频输入，改为只用名称和分组推断：' + detail);
             response = await attempt(false);
         } else {
-            throw new Error('酒馆后端拒绝请求：HTTP ' + response.status + (detail ? ' ' + detail : ''));
+            throw new Error('音色描述接口报错：HTTP ' + response.status + (detail ? ' ' + detail : ''));
         }
     }
     if (!response.ok) {
-        let detail = '';
-        try { const payload = await response.json(); detail = payload?.error?.message || payload?.message || ''; } catch { detail = ''; }
-        throw new Error('调用酒馆默认模型失败：HTTP ' + response.status + (detail ? ' ' + detail : ''));
+        const detail = await readError(response);
+        throw new Error('音色描述接口报错：HTTP ' + response.status + (detail ? ' ' + detail : ''));
     }
     const payload = await response.json().catch(() => null);
     const text = cleanDescription(chatText(payload));
-    if (!text) throw new Error('模型没有返回内容，请换个模型或稍后再试');
+    if (!text) {
+        // OpenAI-compatible services sometimes answer 200 with an error object inside.
+        const hidden = payload?.error?.message || payload?.message || '';
+        if (hidden) throw new Error('模型报错：' + hidden);
+        throw new Error('模型没有返回内容，请换个模型或稍后再试');
+    }
     return { text, usedAudio: Boolean(audio), raw: payload };
 }
 
