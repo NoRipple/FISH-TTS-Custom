@@ -178,7 +178,10 @@ export function installVoicePanel(deps) {
     function ensureDialog() {
         if (dialog) return dialog;
         dialog = el('dialog', { class: 'fa-voice-dialog', id: 'fa-voice-dialog' });
-        const title = el('div', { class: 'fa-head-titles' },
+        // The local used to be called `title` too, which shadowed the dialog title
+        // passed into installVoicePanel(); the h3 then read the local mid
+        // initialisation and threw "Cannot access 'title' before initialization".
+        const headTitles = el('div', { class: 'fa-head-titles' },
             el('span', { class: 'fa-head-kicker', text: 'FISH TTS' }),
             el('h3', { class: 'fa-head-title', text: title }));
         const syncBtn = deps.syncRoster
@@ -190,7 +193,7 @@ export function installVoicePanel(deps) {
                 },
             }, icon('fa-rotate'), el('span', { text: '同步名册到世界书' }))
             : null;
-        const head = el('div', { class: 'fa-voice-dialog-head' }, title,
+        const head = el('div', { class: 'fa-voice-dialog-head' }, headTitles,
             el('div', { class: 'fa-head-tools' }, syncBtn,
                 el('button', { class: 'fa-menu_button fa-head-close', type: 'button', title: '关闭（Esc）', text: '×', onclick: () => dialog.close() })));
         const tabs = el('div', { class: 'fa-voice-tabs', role: 'tablist' });
@@ -237,9 +240,12 @@ export function installVoicePanel(deps) {
             host.append(hint('设置表单尚未就绪；请刷新页面后重试。'));
             return;
         }
-        // The host builds its controls the first time it is shown; doing it here
-        // keeps that work off the module-load path.
-        if (!settingsHost.innerHTML.trim()) adoptSettings?.();
+        // The host markup is built once (and its handlers bind by id), then the node
+        // is re-parented into whichever tab is showing. Both halves have to run on
+        // every render: the markup may already exist while the node is still
+        // `hidden` from being parked off-screen.
+        adoptSettings?.();
+        settingsHost.hidden = false;
         host.append(settingsHost);
     }
 

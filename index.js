@@ -184,10 +184,15 @@ function showError(message) {
     dialog.addEventListener('close',()=>dialog.remove(),{once:true});dialog.showModal();
 }
 function click(id, fn) {
-    $(id).addEventListener('click', async () => {
-        $(id).disabled = true;
+    const node = $(id);
+    // A missing control must never abort module evaluation: everything below it
+    // (the wand menu entry, the chat-page dock, the voice panel) would be lost.
+    if (!node) { console.warn('[Fish] 找不到控件 #fa-' + id + '，已跳过绑定'); return; }
+    node.addEventListener('click', async () => {
+        const target = $(id);
+        if (target) target.disabled = true;
         try { await fn(); } catch (e) { log('ERROR', e.message); }
-        finally { $(id).disabled = false; }
+        finally { const back = $(id); if (back) back.disabled = false; }
     });
 }
 async function api(action,input={},signal,update) {
@@ -376,7 +381,6 @@ function refresh() {
     renderDefaultVoiceSelects();
     renderVoiceRows(collectVoiceRows());
 }
-click('open-settings', () => voicePanel.open('settings'));
 click('library-sync', async () => {
     const entries = await fetchVoiceLibrary({ baseUrl: settings.baseUrl, apiKey });
     // Groups, clone markers and edited names are plugin-side only; a sync that
@@ -615,8 +619,10 @@ function enqueue(segments, replace = false, eager = false) {
     queue.enqueue(items);
 }
 function bind(id, name, checkbox = false) {
-    $(id)[checkbox ? 'checked' : 'value'] = settings[name];
-    $(id).addEventListener(checkbox ? 'change' : 'input', () => {
+    const node = $(id);
+    if (!node) { console.warn('[Fish] 找不到控件 #fa-' + id + '，已跳过绑定'); return; }
+    node[checkbox ? 'checked' : 'value'] = settings[name];
+    node.addEventListener(checkbox ? 'change' : 'input', () => {
         const value = checkbox ? $(id).checked : $(id).value.trim();
         settings[name] = value; save();
         if (['baseUrl', 'model'].includes(name)) stopAll();
